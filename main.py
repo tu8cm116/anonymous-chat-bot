@@ -230,6 +230,107 @@ async def handle_messages(message: types.Message):
     if user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
+# --- МОДЕРАТОРСКИЙ РЕЖИМ ---
+
+def get_moderator_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Жалобы"), KeyboardButton(text="🚫 Бан"), KeyboardButton(text="♻️ Разбан")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="⬅️ Выйти из режима модератора")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери действие..."
+    )
+
+@dp.message(Command("moderator"))
+async def enter_moderator_mode(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        await message.answer("⛔ У тебя нет прав модератора.")
+        return
+    await update_user(message.from_user.id, state="moderator")
+    await message.answer("🔐 Режим модератора активирован.", reply_markup=get_moderator_menu())
+
+# --- Выход из режима ---
+@dp.message(lambda m: m.text == "⬅️ Выйти из режима модератора")
+async def exit_moderator_mode(message: types.Message):
+    await update_user(message.from_user.id, state="menu")
+    await message.answer("✅ Режим модератора выключен.", reply_markup=get_main_menu())
+
+# --- Просмотр жалоб ---
+@dp.message(lambda m: m.text == "📋 Жалобы")
+async def show_reports(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        return
+    conn = await asyncpg.connect(DATABASE_URL)
+    rows = await conn.fetch('SELECT * FROM reports ORDER BY id DESC LIMIT 10')
+    await conn.close()
+    if not rows:
+        await message.answer("Жалоб пока нет.")
+        return
+    text = "\n\n".join([f"#{r['id']} | От: {r['from_id']} → На: {r['to_id']} | {r['timestamp']:%d.%m %H:%M}" for r in rows])
+    await message.answer(f"📋 Последние жалобы:\n\n{text}")
+
+# --- Бан пользователя ---
+@dp.message(lambda m: m.text == "🚫 Бан")
+async def ask_ban_id(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        return
+    await update_user(message.from_user.id, state="ban_input")
+    await message.answer("Введи ID пользователя, которого нужно забанить:", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Выйти из режима модератора")]],
+        resize_keyboard=True
+    ))
+
+# --- Разбан ---
+@dp.message(lambda m: m.text == "♻️ Разбан")
+async def ask_unban_id(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        return
+    await update_user(message.from_user.id, state="unban_input")
+    await message.answer("Введи ID пользователя, которого нужно разбанить:", reply_markup=ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="⬅️ Выйти из режима модератора")]],
+        resize_keyboard=True
+    ))
+
+# --- Ввод ID для бана/разбана ---
+@dp.message()
+async def handle_moderator_actions(message: types.Message):
+    user = await get_user(message.from_user.id)
+    if not user or user["state"] not in ["ban_input", "unban_input"]:
+        return
+
+    target_id = message.text.strip()
+    if not target_id.isdigit():
+        await message.answer("Некорректный ID.")
+        return
+    target_id = int(target_id)
+
+    if user["state"] == "ban_input":
+        await ban_user(target_id)
+        await message.answer(f"🚫 Пользователь {target_id} забанен.", reply_markup=get_moderator_menu())
+        await bot.send_message(target_id, "Ты был забанен модератором.", reply_markup=get_main_menu())
+
+    elif user["state"] == "unban_input":
+        await unban_user(target_id)
+        await message.answer(f"♻️ Пользователь {target_id} разбанен.", reply_markup=get_moderator_menu())
+        await bot.send_message(target_id, "Твой бан снят. Повтори /start.", reply_markup=get_main_menu())
+
+    await update_user(message.from_user.id, state="moderator")
+
+# --- Статистика ---
+@dp.message(lambda m: m.text == "📊 Статистика")
+async def show_stats(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        return
+    total, active, reports = await get_stats()
+    await message.answer(
+        f"📊 Статистика:\n\n"
+        f"👥 Всего пользователей: {total}\n"
+        f"💬 Активных чатов: {active}\n"
+        f"⚠️ Жалоб: {reports}"
+    )
+
+
 # --- Запуск ---
 async def on_startup(app):
     await init_db()

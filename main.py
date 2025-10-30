@@ -22,8 +22,8 @@ logging.basicConfig(level=logging.INFO)
 def get_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("Найти собеседника")],
-            [KeyboardButton("Правила"), KeyboardButton("Мой ID")]
+            [KeyboardButton(text="Найти собеседника")],
+            [KeyboardButton(text="Правила"), KeyboardButton(text="Мой ID")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Выбери действие..."
@@ -32,7 +32,7 @@ def get_main_menu():
 def get_searching_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("Отмена")]
+            [KeyboardButton(text="Отмена")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Ищем собеседника..."
@@ -41,8 +41,8 @@ def get_searching_menu():
 def get_chat_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton("Стоп"), KeyboardButton("Следующий")],
-            [KeyboardButton("Пожаловаться")]
+            [KeyboardButton(text="Стоп"), KeyboardButton(text="Следующий")],
+            [KeyboardButton(text="Пожаловаться")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Напиши сообщение..."
@@ -99,7 +99,7 @@ async def rules(message: types.Message):
     await message.answer(
         "Правила:\n1. Нет мата\n2. Нет спама\n3. Нет рекламы\n4. Уважение\n\nНарушение = бан",
         reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton("Назад")]],
+            keyboard=[[KeyboardButton(text="Назад")]],
             resize_keyboard=True
         )
     )
@@ -156,7 +156,7 @@ async def report(message: types.Message):
     await message.answer(
         "Напиши причину жалобы (1–100 символов):",
         reply_markup=ReplyKeyboardMarkup(
-            keyboard=[[KeyboardButton("Отмена")]],
+            keyboard=[[KeyboardButton(text="Отмена")]],
             resize_keyboard=True
         )
     )
@@ -228,7 +228,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! КНОПКИ ПОД ПОЛЕМ ВВОДА — КАК НА ФОТО!")
+    print("БОТ ЗАПУЩЕН! КНОПКИ ПОД ПОЛЕМ ВВОДА — РАБОТАЮТ!")
 
 def main():
     app = web.Application()

@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import asyncpg
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
@@ -19,7 +18,7 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- Клавиатуры ----
+# --- Клавиатуры ---
 def get_main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Найти собеседника", callback_data="search")],
@@ -46,7 +45,7 @@ async def check_ban(user_id):
         return True
     return False
 
-# --- ОЧЕРЕДЬ (одна на всех) ---
+# --- ОЧЕРЕДЬ ---
 searching_queue = []
 
 # --- ЦЕНТРАЛЬНЫЙ ПОИСК ---
@@ -104,7 +103,6 @@ async def back_to_menu(callback: types.CallbackQuery):
         reply_markup=get_main_menu()
     )
 
-# --- ПОИСК ---
 @dp.callback_query(lambda c: c.data == "search")
 async def search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -153,35 +151,37 @@ async def cancel_report(callback: types.CallbackQuery):
     await update_user(callback.from_user.id, state='chat')
     await callback.message.edit_text("Жалоба отменена.", reply_markup=get_chat_menu())
 
-# --- 1. ЖАЛОБА ---
-@dp.message(lambda m: m.text and (user := await get_user(m.from_user.id)) and user['state'] == 'reporting')
-async def handle_report_reason(message: types.Message):
+# --- ОБРАБОТКА ПРИЧИНЫ ЖАЛОБЫ (БЕЗ await в лямбде) ---
+@dp.message(lambda m: m.text)
+async def handle_report_or_chat(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
-    reason = message.text.strip()
-    
-    if len(reason) > 100:
-        await message.answer("Причина слишком длинная (макс. 100 символов).")
+    if not user:
         return
-    
-    partner_id = user['partner_id']
-    await add_report(user_id, partner_id)
-    await message.answer("Жалоба отправлена. Спасибо!", reply_markup=get_chat_menu())
-    await update_user(user_id, state='chat')
-    
-    count = await get_reports_count(partner_id)
-    if count >= 3:
-        await ban_user(partner_id)
-        await bot.send_message(partner_id, "Ты забанен за жалобы.")
-    
-    await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {user_id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- 2. ЧАТ ---
-@dp.message(lambda m: m.text and (user := await get_user(m.from_user.id)) and user['state'] == 'chat' and user['partner_id'])
-async def handle_chat_message(message: types.Message):
-    user_id = message.from_user.id
-    user = await get_user(user_id)
-    await bot.send_message(user['partner_id'], message.text)
+    # 1. Жалоба
+    if user['state'] == 'reporting':
+        reason = message.text.strip()
+        if len(reason) > 100:
+            await message.answer("Причина слишком длинная (макс. 100 символов).")
+            return
+        
+        partner_id = user['partner_id']
+        await add_report(user_id, partner_id)
+        await message.answer("Жалоба отправлена. Спасибо!", reply_markup=get_chat_menu())
+        await update_user(user_id, state='chat')
+        
+        count = await get_reports_count(partner_id)
+        if count >= 3:
+            await ban_user(partner_id)
+            await bot.send_message(partner_id, "Ты забанен за жалобы.")
+        
+        await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {user_id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
+        return
+
+    # 2. Чат
+    if user['state'] == 'chat' and user['partner_id']:
+        await bot.send_message(user['partner_id'], message.text)
 
 # --- СТОП ---
 @dp.callback_query(lambda c: c.data == "stop")
@@ -207,9 +207,8 @@ async def on_startup(app):
     await init_db()
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
-    # Запускаем центральный поиск
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! ОЧЕРЕДЬ — ОДНА, СООБЩЕНИЯ — 100%")
+    print("БОТ ЗАПУЩЕН! ОЧЕРЕДЬ РАБОТАЕТ, СООБЩЕНИЯ ДОХОДЯТ!")
 
 def main():
     app = web.Application()

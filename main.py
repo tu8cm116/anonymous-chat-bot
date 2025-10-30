@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 import os
@@ -18,18 +18,23 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- КЛАВИАТУРЫ ---
+# --- КЛАВИАТУРЫ ВНИЗУ (ReplyKeyboardMarkup) ---
 def get_main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Найти собеседника", callback_data="search")],
-        [InlineKeyboardButton(text="Правила", callback_data="rules"),
-         InlineKeyboardButton(text="Мой ID", callback_data="my_id")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Найти собеседника")],
+            [KeyboardButton(text="Правила"), KeyboardButton(text="Мой ID")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери действие..."
+    )
 
 def get_searching_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Отмена", callback_data="cancel_search")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[[KeyboardButton(text="Отмена")]],
+        resize_keyboard=True,
+        input_field_placeholder="Ищем собеседника..."
+    )
 
 def get_chat_menu():
     return ReplyKeyboardMarkup(
@@ -66,6 +71,7 @@ async def start_search_loop():
         else:
             await asyncio.sleep(1)
 
+# --- СТАРТ ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
@@ -81,24 +87,25 @@ async def start(message: types.Message):
         reply_markup=get_main_menu()
     )
 
-# --- INLINE КНОПКИ ---
-@dp.callback_query(lambda c: c.data == "my_id")
-async def my_id(callback: types.CallbackQuery):
-    await callback.answer(f"Твой ID: {callback.from_user.id}", show_alert=True)
+# --- КНОПКИ ПО ТЕКСТУ ---
+@dp.message(lambda m: m.text == "Мой ID")
+async def my_id(message: types.Message):
+    await message.answer(f"Твой ID: {message.from_user.id}")
 
-@dp.callback_query(lambda c: c.data == "rules")
-async def rules(callback: types.CallbackQuery):
-    await callback.message.edit_text(
+@dp.message(lambda m: m.text == "Правила")
+async def rules(message: types.Message):
+    await message.answer(
         "Правила:\n1. Нет мата\n2. Нет спама\n3. Нет рекламы\n4. Уважение\n\nНарушение = бан",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="back_to_menu")]
-        ])
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text="Назад")]],
+            resize_keyboard=True
+        )
     )
 
-@dp.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    await update_user(callback.from_user.id, state='menu')
-    await callback.message.edit_text(
+@dp.message(lambda m: m.text == "Назад")
+async def back_to_menu(message: types.Message):
+    await update_user(message.from_user.id, state='menu')
+    await message.answer(
         "Привет! Анонимный чат на двоих\n\n"
         "• Полная анонимность\n"
         "• Реальные собеседники\n"
@@ -107,40 +114,41 @@ async def back_to_menu(callback: types.CallbackQuery):
         reply_markup=get_main_menu()
     )
 
-@dp.callback_query(lambda c: c.data == "search")
-async def search(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+# --- ПОИСК ---
+@dp.message(lambda m: m.text == "Найти собеседника")
+async def search(message: types.Message):
+    user_id = message.from_user.id
     if await check_ban(user_id):
         return
     
     if user_id in searching_queue:
-        await callback.answer("Ты уже в очереди!")
+        await message.answer("Ты уже в очереди!")
         return
     
     await update_user(user_id, state='searching')
     searching_queue.append(user_id)
     
-    await callback.message.edit_text(
+    await message.answer(
         "Ищем собеседника...\n\nОжидаем ещё одного человека.",
         reply_markup=get_searching_menu()
     )
 
-@dp.callback_query(lambda c: c.data == "cancel_search")
-async def cancel_search(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+# --- ОТМЕНА ПОИСКА ---
+@dp.message(lambda m: m.text == "Отмена")
+async def cancel_search(message: types.Message):
+    user_id = message.from_user.id
     if user_id in searching_queue:
         searching_queue.remove(user_id)
     await update_user(user_id, state='menu')
-    await callback.message.edit_text("Поиск отменён.", reply_markup=get_main_menu())
+    await message.answer("Поиск отменён.", reply_markup=get_main_menu())
 
-# --- КНОПКИ ЧАТА (Reply) ---
+# --- КНОПКИ ЧАТА: СТОП, СЛЕДУЮЩИЙ, ПОЖАЛОВАТЬСЯ ---
 @dp.message(lambda m: m.text in ["Стоп", "Следующий", "Пожаловаться"])
 async def handle_chat_buttons(message: types.Message):
-    text = message.text
     user_id = message.from_user.id
     user = await get_user(user_id)
 
-    if text == "Стоп":
+    if message.text == "Стоп":
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
@@ -151,7 +159,7 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer("Чат завершён.", reply_markup=get_main_menu())
         return
 
-    if text == "Следующий":
+    if message.text == "Следующий":
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
@@ -163,7 +171,7 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
         return
 
-    if text == "Пожаловаться":
+    if message.text == "Пожаловаться":
         if not user or not user['partner_id']:
             await message.answer("Чат завершён.")
             return
@@ -209,7 +217,7 @@ async def handle_report_reason(message: types.Message):
     
     await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- ЧАТ (все остальные сообщения) ---
+# --- ОБЫЧНЫЕ СООБЩЕНИЯ В ЧАТЕ ---
 @dp.message()
 async def handle_chat(message: types.Message):
     user = await get_user(message.from_user.id)
@@ -223,7 +231,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! БЕЗ ОШИБОК!")
+    print("БОТ ЗАПУЩЕН! ВСЕ КНОПКИ ВНИЗУ — РАБОТАЮТ!")
 
 def main():
     app = web.Application()

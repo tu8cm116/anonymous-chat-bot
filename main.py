@@ -13,7 +13,8 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MODERATOR_ID = 684261784
 
-bot =49 Bot(token=BOT_TOKEN)
+# ИСПРАВЛЕНО: УБРАНО "49"
+bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
@@ -153,7 +154,7 @@ async def handle_chat_buttons(message: types.Message):
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
-            await bot.send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())  # ВОЗВРАЩАЕМ КНОПКИ!
+            await bot.send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
         if user_id in searching_queue:
             searching_queue.remove(user_id)
         await update_user(user_id, partner_id=None, state='menu')
@@ -165,7 +166,7 @@ async def handle_chat_buttons(message: types.Message):
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
-            await bot.send_message(partner_id, "Собеседник ищет нового.", reply_markup=get_main_menu())  # ВОЗВРАЩАЕМ КНОПКИ!
+            await bot.send_message(partner_id, "Собеседник ищет нового.", reply_markup=get_main_menu())
         if user_id in searching_queue:
             searching_queue.remove(user_id)
         await update_user(user_id, partner_id=None, state='searching')
@@ -220,7 +221,7 @@ async def handle_report_reason(message: types.Message):
     
     await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- ОБЫЧНЫЕ СООБЩЕНИЯ В ЧАТЕ (ИСПРАВЛЕНО!) ---
+# --- ОБЫЧНЫЕ СООБЩЕНИЯ В ЧАТЕ ---
 @dp.message()
 async def handle_chat(message: types.Message):
     user = await get_user(message.from_user.id)
@@ -234,7 +235,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! СООБЩЕНИЯ РАБОТАЮТ! КНОПКИ ВОЗВРАЩАЮТСЯ!")
+    print("БОТ ЗАПУЩЕН! БЕЗ ОШИБОК!")
 
 def main():
     app = web.Application()

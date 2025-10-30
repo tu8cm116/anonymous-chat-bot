@@ -77,7 +77,6 @@ async def rules(callback: types.CallbackQuery):
         ])
     )
 
-# --- ВОЗВРАЩАЕМ ПОЛНЫЙ ТЕКСТ ---
 @dp.callback_query(lambda c: c.data == "back_to_menu")
 async def back_to_menu(callback: types.CallbackQuery):
     await update_user(callback.from_user.id, state='menu')
@@ -125,24 +124,13 @@ async def cancel_search(callback: types.CallbackQuery):
     await update_user(user_id, state='menu')
     await callback.message.edit_text("Поиск отменён.", reply_markup=get_main_menu())
 
-# --- ЖАЛОБА: ТОЛЬКО 1 РАЗ ЗА ЧАТ ---
+# --- ЖАЛОБА БЕЗ ОГРАНИЧЕНИЙ ---
 @dp.callback_query(lambda c: c.data == "report")
 async def report(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     user = await get_user(user_id)
     if not user or not user['partner_id']:
         await callback.answer("Чат завершён.", show_alert=True)
-        return
-    
-    partner_id = user['partner_id']
-    
-    # Проверка: уже жаловался в этом чате?
-    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-    already = await conn.fetchval('SELECT 1 FROM reports WHERE from_id = $1 AND to_id = $2', user_id, partner_id)
-    await conn.close()
-    
-    if already:
-        await callback.answer("Ты уже пожаловался на этого пользователя в этом чате.", show_alert=True)
         return
     
     await callback.message.edit_text(
@@ -182,7 +170,7 @@ async def handle_report_reason(message: types.Message):
     
     await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {user_id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- СООБЩЕНИЯ ДОХОДЯТ! ---
+# --- СООБЩЕНИЯ ---
 @dp.message()
 async def handle_message(message: types.Message):
     user_id = message.from_user.id
@@ -190,7 +178,7 @@ async def handle_message(message: types.Message):
     if user and user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
-# --- СТОП: УБИРАЕМ КНОПКИ У ОБОИХ ---
+# --- СТОП ---
 @dp.callback_query(lambda c: c.data == "stop")
 async def stop(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -208,7 +196,7 @@ async def next_chat(callback: types.CallbackQuery):
     await stop(callback)
     await search(callback)
 
-# --- МОДЕРАЦИЯ: РАБОТАЕТ! ---
+# --- МОДЕРАЦИЯ ---
 @dp.message(Command("mod"))
 async def mod_panel(message: types.Message):
     if message.from_user.id != MODERATOR_ID:
@@ -271,7 +259,7 @@ async def on_startup(app):
     await init_db()
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
-    print("БОТ ЗАПУЩЕН! Все баги исправлены!")
+    print("БОТ ЗАПУЩЕН! Жалобы — БЕЗ ОГРАНИЧЕНИЙ!")
 
 def main():
     app = web.Application()

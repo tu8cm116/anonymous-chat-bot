@@ -17,7 +17,7 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
 
 # Твой ID (модератор) — ЗАМЕНИ НА СВОЙ!
-MODERATOR_ID = 123456789  # ← ВСТАВЬ СВОЙ ID ИЗ "Мой ID"
+MODERATOR_ID = 684261784  # ← ВСТАВЬ СВОЙ ID ИЗ "Мой ID"
 
 # Инициализация
 bot = Bot(token=BOT_TOKEN)

@@ -146,12 +146,13 @@ async def cancel_report(callback: types.CallbackQuery):
     await update_user(callback.from_user.id, state='chat')
     await callback.message.edit_text("Жалоба отменена.", reply_markup=get_chat_menu())
 
+# --- ОБРАБОТКА ПРИЧИНЫ ЖАЛОБЫ ---
 @dp.message(lambda m: m.text)
 async def handle_report_reason(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user or user['state'] != 'reporting':
-        return
+        return  # Игнорируем, если не в режиме жалобы
     
     reason = message.text.strip()
     if len(reason) > 100:
@@ -170,11 +171,12 @@ async def handle_report_reason(message: types.Message):
     
     await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {user_id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- СООБЩЕНИЯ ---
+# --- СООБЩЕНИЯ В ЧАТЕ (ТОЛЬКО В ЧАТЕ!) ---
 @dp.message()
-async def handle_message(message: types.Message):
+async def handle_chat_message(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
+    # Только если в чате и НЕ в режиме жалобы
     if user and user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
@@ -230,7 +232,7 @@ async def unban_cmd(message: types.Message):
         return
     try:
         tg_id = int(message.text.split()[1])
-        await unban_user(tg_id)
+        await unban_user成為(tg_id)
         await message.answer(f"{tg_id} разбанен.")
     except:
         await message.answer("Использование: /unban ID")
@@ -259,7 +261,7 @@ async def on_startup(app):
     await init_db()
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
-    print("БОТ ЗАПУЩЕН! Жалобы — БЕЗ ОГРАНИЧЕНИЙ!")
+    print("БОТ ЗАПУЩЕН! СООБЩЕНИЯ ДОХОДЯТ!")
 
 def main():
     app = web.Application()

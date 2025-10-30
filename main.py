@@ -194,7 +194,7 @@ async def handle_messages(message: types.Message):
     if not user:
         return
 
-    # ЖАЛОБА
+    # --- ЖАЛОБА ---
     if user['state'] == 'reporting':
         reason = message.text.strip()
         if len(reason) > 100:
@@ -203,8 +203,13 @@ async def handle_messages(message: types.Message):
         
         partner_id = user['partner_id']
         await add_report(message.from_user.id, partner_id)
-        await message.answer("Жалоба отправлена. Спасибо!", reply_markup=get_chat_menu())
-        await update_user(message.from_user.id, state='chat')
+        
+        # ЗАВЕРШАЕМ ЧАТ У ОБОИХ
+        await update_user(message.from_user.id, state='menu', partner_id=None)
+        await update_user(partner_id, state='menu', partner_id=None)
+        
+        await message.answer("Жалоба отправлена. Чат завершён.", reply_markup=get_main_menu())
+        await bot.send_message(partner_id, "Чат завершён из-за жалобы.", reply_markup=get_main_menu())
         
         count = await get_reports_count(partner_id)
         if count >= 3:
@@ -213,11 +218,15 @@ async def handle_messages(message: types.Message):
         
         await bot.send_message(
             MODERATOR_ID,
-            f"Жалоба:\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}"
+            f"ЖАЛОБА + ЧАТ ЗАВЕРШЁН\n"
+            f"От: {message.from_user.id}\n"
+            f"На: {partner_id}\n"
+            f"Причина: {reason}\n"
+            f"Всего жалоб: {count}"
         )
         return
 
-    # ОБЫЧНЫЕ СООБЩЕНИЯ
+    # --- ОБЫЧНЫЕ СООБЩЕНИЯ ---
     if user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 

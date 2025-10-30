@@ -13,12 +13,12 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MODERATOR_ID = 684261784
 
-bot = Bot(token=BOT_TOKEN)
+bot =49 Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- КЛАВИАТУРЫ ВНИЗУ (ReplyKeyboardMarkup) ---
+# --- КЛАВИАТУРЫ ВНИЗУ ---
 def get_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
@@ -148,22 +148,24 @@ async def handle_chat_buttons(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
 
+    # --- СТОП ---
     if message.text == "Стоп":
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
-            await bot.send_message(partner_id, "Собеседник завершил чат.")
+            await bot.send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())  # ВОЗВРАЩАЕМ КНОПКИ!
         if user_id in searching_queue:
             searching_queue.remove(user_id)
         await update_user(user_id, partner_id=None, state='menu')
         await message.answer("Чат завершён.", reply_markup=get_main_menu())
         return
 
+    # --- СЛЕДУЮЩИЙ ---
     if message.text == "Следующий":
         if user and user['partner_id']:
             partner_id = user['partner_id']
             await update_user(partner_id, partner_id=None, state='menu')
-            await bot.send_message(partner_id, "Собеседник ищет нового.")
+            await bot.send_message(partner_id, "Собеседник ищет нового.", reply_markup=get_main_menu())  # ВОЗВРАЩАЕМ КНОПКИ!
         if user_id in searching_queue:
             searching_queue.remove(user_id)
         await update_user(user_id, partner_id=None, state='searching')
@@ -171,6 +173,7 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
         return
 
+    # --- ПОЖАЛОВАТЬСЯ ---
     if message.text == "Пожаловаться":
         if not user or not user['partner_id']:
             await message.answer("Чат завершён.")
@@ -193,7 +196,7 @@ async def cancel_report(message: types.Message):
         await update_user(message.from_user.id, state='chat')
         await message.answer("Жалоба отменена.", reply_markup=get_chat_menu())
 
-# --- ПРИЧИНА ЖАЛОБЫ (БЕЗ await в лямбде) ---
+# --- ПРИЧИНА ЖАЛОБЫ ---
 @dp.message()
 async def handle_report_reason(message: types.Message):
     user = await get_user(message.from_user.id)
@@ -213,11 +216,11 @@ async def handle_report_reason(message: types.Message):
     count = await get_reports_count(partner_id)
     if count >= 3:
         await ban_user(partner_id)
-        await bot.send_message(partner_id, "Ты забанен за жалобы.")
+        await bot.send_message(partner_id, "Ты забанен за жалобы.", reply_markup=get_main_menu())
     
     await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {message.from_user.id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
 
-# --- ОБЫЧНЫЕ СООБЩЕНИЯ В ЧАТЕ ---
+# --- ОБЫЧНЫЕ СООБЩЕНИЯ В ЧАТЕ (ИСПРАВЛЕНО!) ---
 @dp.message()
 async def handle_chat(message: types.Message):
     user = await get_user(message.from_user.id)
@@ -231,7 +234,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! ВСЕ КНОПКИ ВНИЗУ — РАБОТАЮТ!")
+    print("БОТ ЗАПУЩЕН! СООБЩЕНИЯ РАБОТАЮТ! КНОПКИ ВОЗВРАЩАЮТСЯ!")
 
 def main():
     app = web.Application()

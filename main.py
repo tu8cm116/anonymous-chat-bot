@@ -17,7 +17,7 @@ if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден в .env")
 
 # Твой ID (модератор) — ЗАМЕНИ НА СВОЙ TELEGRAM ID!
-MODERATOR_ID = 123456789  # Получи свой ID: напиши боту /start, потом в коде /my_id
+MODERATOR_ID = 684261784  # Получи свой ID: напиши боту /start, потом в коде /my_id
 
 # Инициализация
 bot = Bot(token=BOT_TOKEN)

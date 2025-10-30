@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -16,8 +16,8 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("BOT_TOKEN не найден")
 
-# Твой ID (модератор) — ЗАМЕНИ НА СВОЙ!
-MODERATOR_ID = 684261784  # ← ВСТАВЬ СВОЙ ID ИЗ "Мой ID"
+# Твой ID (модератор) — ВСТАВЬ СВОЙ ИЗ "Мой ID" ПОЗЖЕ!
+MODERATOR_ID = 684261784  # ← Замени на настоящий
 
 # Инициализация
 bot = Bot(token=BOT_TOKEN)
@@ -66,7 +66,12 @@ async def start(message: types.Message):
         reply_markup=get_main_menu()
     )
 
-@dp.callback_query(F.data == "rules")
+# --- КНОПКИ (callback_query) ---
+@dp.callback_query(lambda c: c.data == "my_id")
+async def my_id(callback: types.CallbackQuery):
+    await callback.answer(f"Твой ID: {callback.from_user.id}\n\nЕсли забанят — напиши модератору с этим ID.", show_alert=True)
+
+@dp.callback_query(lambda c: c.data == "rules")
 async def rules(callback: types.CallbackQuery):
     await callback.message.edit_text(
         "Правила:\n"
@@ -80,16 +85,14 @@ async def rules(callback: types.CallbackQuery):
         ])
     )
 
-@dp.callback_query(F.data == "my_id")
-async def my_id(callback: types.CallbackQuery):
-    await callback.answer(f"Твой ID: {callback.from_user.id}", show_alert=True)
-
-@dp.callback_query(F.data == "back_to_menu")
+@dp.callback_query(lambda c: c.data == "back_to_menu")
 async def back_to_menu(callback: types.CallbackQuery):
-    users[callback.from_user.id]["state"] = "menu"
+    user_id = callback.from_user.id
+    if user_id in users:
+        users[user_id]["state"] = "menu"
     await callback.message.edit_text("Главное меню:", reply_markup=get_main_menu())
 
-@dp.callback_query(F.data == "search")
+@dp.callback_query(lambda c: c.data == "search")
 async def search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     users[user_id] = {"state": "searching"}
@@ -101,27 +104,58 @@ async def search(callback: types.CallbackQuery):
     await asyncio.sleep(3)
     partner_id = 999999999
     users[user_id]["partner"] = partner_id
-    users[partner_id] = {"partner": user_id, "state": "chat"}
+    if partner_id not in users:
+        users[partner_id] = {"partner": user_id, "state": "chat"}
     await callback.message.edit_text(
         "Собеседник найден! Можешь писать.",
         reply_markup=get_chat_menu()
     )
+    users[user_id]["state"] = "chat"
 
-@dp.callback_query(F.data == "cancel_search")
+@dp.callback_query(lambda c: c.data == "cancel_search")
 async def cancel_search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
-    users[user_id]["state"] = "menu"
+    if user_id in users:
+        users[user_id]["state"] = "menu"
     await callback.message.edit_text("Поиск отменён.", reply_markup=get_main_menu())
 
+@dp.callback_query(lambda c: c.data == "stop")
+async def stop(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    if user_id in users and "partner" in users[user_id]:
+        partner_id = users[user_id]["partner"]
+        if partner_id in users:
+            users[partner_id]["state"] = "menu"
+        users[user_id]["partner"] = None
+        users[user_id]["state"] = "menu"
+    await callback.message.edit_text(
+        "Чат завершён. Спасибо!\n\nХочешь найти нового?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Найти ещё", callback_data="search")],
+            [InlineKeyboardButton(text="В меню", callback_data="back_to_menu")]
+        ])
+    )
+
+@dp.callback_query(lambda c: c.data == "next")
+async def next_chat(callback: types.CallbackQuery):
+    await stop(callback)
+    await search(callback)
+
+@dp.callback_query(lambda c: c.data == "report")
+async def report(callback: types.CallbackQuery):
+    await callback.answer("Жалоба отправлена. Модератор проверит.", show_alert=True)
+
+# --- Пересылка сообщений ---
 @dp.message()
-async def echo(message: types.Message):
+async def handle_message(message: types.Message):
     user_id = message.from_user.id
     if user_id not in users or users[user_id]["state"] != "chat":
         return
     partner_id = users[user_id]["partner"]
-    await bot.send_message(partner_id, message.text)
+    if partner_id:
+        await bot.send_message(partner_id, message.text)
 
-# --- Веб-сервер для Render ---
+# --- Веб-сервер ---
 async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
@@ -136,7 +170,6 @@ def main():
     SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
     setup_application(app, dp, bot=bot)
     
-    # Health check
     async def health(request):
         return web.Response(text="OK")
     app.router.add_get("/health", health)

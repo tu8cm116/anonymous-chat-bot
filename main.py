@@ -103,6 +103,7 @@ async def back_to_menu(callback: types.CallbackQuery):
         reply_markup=get_main_menu()
     )
 
+# --- ПОИСК: КНОПКА "ОТМЕНА" ВНИЗУ ---
 @dp.callback_query(lambda c: c.data == "search")
 async def search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -116,18 +117,23 @@ async def search(callback: types.CallbackQuery):
     await update_user(user_id, state='searching')
     searching_queue.append(user_id)
     
-    await callback.message.edit_text(
+    await callback.message.delete()
+    await bot.send_message(
+        user_id,
         "Ищем собеседника...\n\nОжидаем ещё одного человека.",
         reply_markup=get_searching_menu()
     )
 
+# --- ОТМЕНА ПОИСКА: КНОПКИ ВНИЗУ ---
 @dp.callback_query(lambda c: c.data == "cancel_search")
 async def cancel_search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if user_id in searching_queue:
         searching_queue.remove(user_id)
     await update_user(user_id, state='menu')
-    await callback.message.edit_text("Поиск отменён.", reply_markup=get_main_menu())
+    
+    await callback.message.delete()
+    await bot.send_message(user_id, "Поиск отменён.", reply_markup=get_main_menu())
 
 # --- ЖАЛОБА ---
 @dp.callback_query(lambda c: c.data == "report")
@@ -138,7 +144,9 @@ async def report(callback: types.CallbackQuery):
         await callback.answer("Чат завершён.", show_alert=True)
         return
     
-    await callback.message.edit_text(
+    await callback.message.delete()
+    await bot.send_message(
+        user_id,
         "Напиши причину жалобы (1–100 символов):",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Отмена", callback_data="cancel_report")]
@@ -146,12 +154,18 @@ async def report(callback: types.CallbackQuery):
     )
     await update_user(user_id, state='reporting')
 
+# --- ОТМЕНА ЖАЛОБЫ: КНОПКИ ВНИЗУ ---
 @dp.callback_query(lambda c: c.data == "cancel_report")
 async def cancel_report(callback: types.CallbackQuery):
     await update_user(callback.from_user.id, state='chat')
-    await callback.message.edit_text("Жалоба отменена.", reply_markup=get_chat_menu())
+    await callback.message.delete()
+    await bot.send_message(
+        callback.from_user.id,
+        "Жалоба отменена.",
+        reply_markup=get_chat_menu()
+    )
 
-# --- ОБРАБОТКА ПРИЧИНЫ ЖАЛОБЫ (БЕЗ await в лямбде) ---
+# --- ОБРАБОТКА ПРИЧИНЫ ЖАЛОБЫ И ЧАТА ---
 @dp.message(lambda m: m.text)
 async def handle_report_or_chat(message: types.Message):
     user_id = message.from_user.id
@@ -183,7 +197,7 @@ async def handle_report_or_chat(message: types.Message):
     if user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
-# --- СТОП ---
+# --- СТОП: КНОПКИ ВНИЗУ ---
 @dp.callback_query(lambda c: c.data == "stop")
 async def stop(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -195,7 +209,9 @@ async def stop(callback: types.CallbackQuery):
     if user_id in searching_queue:
         searching_queue.remove(user_id)
     await update_user(user_id, partner_id=None, state='menu')
-    await callback.message.edit_text("Чат завершён.", reply_markup=get_main_menu())
+    
+    await callback.message.delete()
+    await bot.send_message(user_id, "Чат завершён.", reply_markup=get_main_menu())
 
 @dp.callback_query(lambda c: c.data == "next")
 async def next_chat(callback: types.CallbackQuery):
@@ -208,7 +224,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! ОЧЕРЕДЬ РАБОТАЕТ, СООБЩЕНИЯ ДОХОДЯТ!")
+    print("БОТ ЗАПУЩЕН! КНОПКИ ВНИЗУ, ЧАТ РАБОТАЕТ!")
 
 def main():
     app = web.Application()

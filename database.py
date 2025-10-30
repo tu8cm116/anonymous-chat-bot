@@ -35,19 +35,21 @@ async def get_user(tg_id):
 async def update_user(tg_id, **kwargs):
     conn = await asyncpg.connect(DATABASE_URL)
     set_clause = ', '.join(f"{k} = ${i+2}" for i, k in enumerate(kwargs))
+    values = [tg_id] + list(kwargs.values())
     await conn.execute(f'''
-        INSERT INTO users (tg_id) VALUES ($1)
+        INSERT INTO users (tg_id, {', '.join(kwargs.keys())})
+        VALUES ({', '.join(f"${i+1}" for i in range(len(values)))})
         ON CONFLICT (tg_id) DO UPDATE SET {set_clause}
-    ''', tg_id, *list(kwargs.values()))
+    ''', *values)
     await conn.close()
 
-async def find_partner():
+async def find_partner(exclude_id):
     conn = await asyncpg.connect(DATABASE_URL)
     row = await conn.fetchrow('''
         SELECT tg_id FROM users 
-        WHERE state = 'searching'
+        WHERE state = 'searching' AND tg_id != $1
         ORDER BY last_active ASC LIMIT 1
-    ''')
+    ''', exclude_id)
     await conn.close()
     return row['tg_id'] if row else None
 
@@ -65,7 +67,7 @@ async def get_reports_count(tg_id):
 async def ban_user(tg_id, hours=24):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute('''
-        INSERT INTO bans (tg_id, until) VALUES ($1, NOW() + INTERVAL '$2 hours')
+        INSERT INTO bans (tg_id, until) VALUES ($1, NOW() + INTERVAL '%s hours')
         ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
     ''', tg_id, hours)
     await conn.close()
@@ -84,7 +86,7 @@ async def unban_user(tg_id):
 async def get_stats():
     conn = await asyncpg.connect(DATABASE_URL)
     total_users = await conn.fetchval('SELECT COUNT(*) FROM users')
-    active_chats = await conn.fetchval('SELECT COUNT(*) / 2 FROM users WHERE state = "chat"')
+    active_chats = await conn.fetchval('SELECT COUNT(*) / 2 FROM users WHERE state = ''chat''')
     total_reports = await conn.fetchval('SELECT COUNT(*) FROM reports')
     await conn.close()
     return total_users, active_chats, total_reports

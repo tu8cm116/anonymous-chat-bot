@@ -19,7 +19,7 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- Клавиатуры ---
+# --- Клавиатуры ----
 def get_main_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Найти собеседника", callback_data="search")],

@@ -13,7 +13,6 @@ load_dotenv()
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MODERATOR_ID = 684261784
 
-# ИСПРАВЛЕНО: УБРАНО "49"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
@@ -134,22 +133,12 @@ async def search(message: types.Message):
         reply_markup=get_searching_menu()
     )
 
-# --- ОТМЕНА ПОИСКА ---
-@dp.message(lambda m: m.text == "Отмена")
-async def cancel_search(message: types.Message):
-    user_id = message.from_user.id
-    if user_id in searching_queue:
-        searching_queue.remove(user_id)
-    await update_user(user_id, state='menu')
-    await message.answer("Поиск отменён.", reply_markup=get_main_menu())
-
 # --- КНОПКИ ЧАТА: СТОП, СЛЕДУЮЩИЙ, ПОЖАЛОВАТЬСЯ ---
 @dp.message(lambda m: m.text in ["Стоп", "Следующий", "Пожаловаться"])
 async def handle_chat_buttons(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
 
-    # --- СТОП ---
     if message.text == "Стоп":
         if user and user['partner_id']:
             partner_id = user['partner_id']
@@ -161,7 +150,6 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer("Чат завершён.", reply_markup=get_main_menu())
         return
 
-    # --- СЛЕДУЮЩИЙ ---
     if message.text == "Следующий":
         if user and user['partner_id']:
             partner_id = user['partner_id']
@@ -174,7 +162,6 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
         return
 
-    # --- ПОЖАЛОВАТЬСЯ ---
     if message.text == "Пожаловаться":
         if not user or not user['partner_id']:
             await message.answer("Чат завершён.")
@@ -183,19 +170,31 @@ async def handle_chat_buttons(message: types.Message):
             "Напиши причину жалобы (1–100 символов):",
             reply_markup=ReplyKeyboardMarkup(
                 keyboard=[[KeyboardButton(text="Отмена")]],
-                resize_keyboard=True
+                resize_keyboard=True,
+                input_field_placeholder="Причина..."
             )
         )
         await update_user(user_id, state='reporting')
         return
 
-# --- ОТМЕНА ЖАЛОБЫ ---
+# --- ОТМЕНА (умная: зависит от состояния) ---
 @dp.message(lambda m: m.text == "Отмена")
-async def cancel_report(message: types.Message):
+async def cancel_anything(message: types.Message):
     user = await get_user(message.from_user.id)
+    
+    # Жалоба
     if user and user['state'] == 'reporting':
         await update_user(message.from_user.id, state='chat')
         await message.answer("Жалоба отменена.", reply_markup=get_chat_menu())
+        return
+    
+    # Поиск
+    if user and user['state'] == 'searching':
+        if message.from_user.id in searching_queue:
+            searching_queue.remove(message.from_user.id)
+        await update_user(message.from_user.id, state='menu')
+        await message.answer("Поиск отменён.", reply_markup=get_main_menu())
+        return
 
 # --- ПРИЧИНА ЖАЛОБЫ ---
 @dp.message()
@@ -235,7 +234,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! БЕЗ ОШИБОК!")
+    print("БОТ ЗАПУЩЕН! ОТМЕНА ПРИ ЖАЛОБЕ — В ЧАТ!")
 
 def main():
     app = web.Application()

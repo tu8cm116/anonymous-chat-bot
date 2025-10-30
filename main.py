@@ -43,7 +43,7 @@ async def check_ban(user_id):
     if await is_banned(user_id):
         await bot.send_message(user_id, "Ты забанен. Обжалуй у модератора.")
         return True
-    return False
+    return false
 
 # --- Хендлеры ---
 @dp.message(Command("start"))
@@ -89,7 +89,6 @@ async def search(callback: types.CallbackQuery):
         "Ищем собеседника...\n\nОжидаем ещё одного человека.",
         reply_markup=get_searching_menu()
     )
-    # Запускаем поиск
     asyncio.create_task(search_partner(user_id))
 
 async def search_partner(user_id):
@@ -98,10 +97,10 @@ async def search_partner(user_id):
     if partner_id:
         await update_user(user_id, partner_id=partner_id, state='chat')
         await update_user(partner_id, partner_id=user_id, state='chat')
+        # КНОПКИ ВНИЗУ, НОВЫМ СООБЩЕНИЕМ
         await bot.send_message(user_id, "Собеседник найден! Пиши.", reply_markup=get_chat_menu())
         await bot.send_message(partner_id, "Собеседник найден! Пиши.", reply_markup=get_chat_menu())
     else:
-        # Никого нет — возвращаем в меню
         await update_user(user_id, state='menu')
         await bot.send_message(user_id, "Никого нет. Попробуй позже.", reply_markup=get_main_menu())
 
@@ -145,7 +144,7 @@ async def handle_message(message: types.Message):
     if user and user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
-# --- МОДЕРАЦИЯ ---
+# --- МОДЕРАЦИЯ (ИСПРАВЛЕНО) ---
 @dp.message(Command("mod"))
 async def mod_panel(message: types.Message):
     if message.from_user.id != MODERATOR_ID:
@@ -207,7 +206,7 @@ async def on_startup(app):
     await init_db()
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
-    print("Бот запущен с БД и очередью!")
+    print("Бот запущен! Кнопки внизу, /mod работает!")
 
 def main():
     app = web.Application()

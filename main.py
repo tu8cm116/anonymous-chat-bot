@@ -43,72 +43,122 @@ async def check_ban(user_id):
     if await is_banned(user_id):
         await bot.send_message(user_id, "Ты забанен. Обжалуй у модератора.")
         return True
-    return false
+    return False
 
-# --- Хендлеры ---
-@dp.message(Command("start"))
-async def start(message: types.Message):
-    user_id = message.from_user.id
-    if await check_ban(user_id):
-        return
-    await update_user(user_id, state='menu')
-    await message.answer(
-        "Привет! Анонимный чат на двоих\n\n"
-        "• Полная анонимность\n"
-        "• Реальные собеседники\n"
-        "• Бан за нарушения\n\n"
-        "Готов? Нажми кнопку.",
-        reply_markup=get_main_menu()
-    )
-
-@dp.callback_query(lambda c: c.data == "my_id")
-async def my_id(callback: types.CallbackQuery):
-    await callback.answer(f"Твой ID: {callback.from_user.id}", show_alert=True)
-
-@dp.callback_query(lambda c: c.data == "rules")
-async def rules(callback: types.CallbackQuery):
-    await callback.message.edit_text(
-        "Правила:\n1. Нет мата\n2. Нет спама\n3. Нет рекламы\n4. Уважение\n\nНарушение = бан",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="back_to_menu")]
-        ])
-    )
-
-@dp.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    await update_user(callback.from_user.id, state='menu')
-    await callback.message.edit_text("Главное меню:", reply_markup=get_main_menu())
+# --- Очередь в реальном времени ---
+searching_users = set()
 
 @dp.callback_query(lambda c: c.data == "search")
 async def search(callback: types.CallbackQuery):
     user_id = callback.from_user.id
     if await check_ban(user_id):
         return
+    
     await update_user(user_id, state='searching')
+    searching_users.add(user_id)
+    
     await callback.message.edit_text(
         "Ищем собеседника...\n\nОжидаем ещё одного человека.",
         reply_markup=get_searching_menu()
     )
-    asyncio.create_task(search_partner(user_id))
+    
+    # Проверяем каждые 2 сек
+    asyncio.create_task(match_users(user_id))
 
-async def search_partner(user_id):
+async def match_users(user_id):
     await asyncio.sleep(2)
+    if user_id not in searching_users:
+        return
+    
     partner_id = await find_partner(user_id)
-    if partner_id:
+    if partner_id and partner_id in searching_users:
+        # Убираем обоих из очереди
+        searching_users.discard(user_id)
+        searching_users.discard(partner_id)
+        
         await update_user(user_id, partner_id=partner_id, state='chat')
         await update_user(partner_id, partner_id=user_id, state='chat')
-        # КНОПКИ ВНИЗУ, НОВЫМ СООБЩЕНИЕМ
+        
+        # КНОПКИ ВНИЗУ НОВЫМ СООБЩЕНИЕМ
         await bot.send_message(user_id, "Собеседник найден! Пиши.", reply_markup=get_chat_menu())
         await bot.send_message(partner_id, "Собеседник найден! Пиши.", reply_markup=get_chat_menu())
     else:
-        await update_user(user_id, state='menu')
-        await bot.send_message(user_id, "Никого нет. Попробуй позже.", reply_markup=get_main_menu())
+        # Никого нет — оставляем в поиске
+        asyncio.create_task(match_users(user_id))
 
 @dp.callback_query(lambda c: c.data == "cancel_search")
 async def cancel_search(callback: types.CallbackQuery):
-    await update_user(callback.from_user.id, state='menu')
+    user_id = callback.from_user.id
+    searching_users.discard(user_id)
+    await update_user(user_id, state='menu')
     await callback.message.edit_text("Поиск отменён.", reply_markup=get_main_menu())
 
+# --- Жалоба с причиной ---
+@dp.callback_query(lambda c: c.data == "report")
+async def report(callback: types.CallbackQuery):
+    user_id = callback.from_user.id
+    user = await get_user(user_id)
+    if not user or not user['partner_id']:
+        await callback.answer("Чат завершён.", show_alert=True)
+        return
+    
+    partner_id = user['partner_id']
+    
+    # Проверка: уже жаловался?
+    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+    already = await conn.fetchval('SELECT 1 FROM reports WHERE from_id = $1 AND to_id = $2', user_id, partner_id)
+    await conn.close()
+    
+    if already:
+        await callback.answer("Ты уже пожаловался на этого пользователя.", show_alert=True)
+        return
+    
+    # Запрашиваем причину
+    await callback.message.edit_text(
+        "Напиши причину жалобы (1–100 символов):",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="Отмена", callback_data="cancel_report")]
+        ])
+    )
+    # Сохраняем состояние
+    await update_user(user_id, state='reporting', partner_id=partner_id)
+
+@dp.callback_query(lambda c: c.data == "cancel_report")
+async def cancel_report(callback: types.CallbackQuery):
+    await update_user(callback.from_user.id, state='chat')
+    await callback.message.edit_text("Жалоба отменена.", reply_markup=get_chat_menu())
+
+@dp.message(lambda m: m.text and (await get_user(m.from_user.id) or {})['state'] == 'reporting')
+async def save_report(message: types.Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    reason = message.text.strip()
+    
+    if len(reason) > 100:
+        await message.answer("Причина слишком длинная. Максимум 100 символов.")
+        return
+    
+    partner_id = user['partner_id']
+    await add_report(user_id, partner_id)
+    await message.answer("Жалоба отправлена. Спасибо!", reply_markup=get_chat_menu())
+    await update_user(user_id, state='chat')
+    
+    count = await get_reports_count(partner_id)
+    if count >= 3:
+        await ban_user(partner_id)
+        await bot.send_message(partner_id, "Ты забанен за жалобы.")
+    
+    await bot.send_message(MODERATOR_ID, f"Жалоба:\nОт: {user_id}\nНа: {partner_id}\nПричина: {reason}\nВсего: {count}")
+
+# --- Чат ---
+@dp.message()
+async def handle_message(message: types.Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    if user and user['state'] == 'chat' and user['partner_id']:
+        await bot.send_message(user['partner_id'], message.text)
+
+# --- Стоп / Следующий ---
 @dp.callback_query(lambda c: c.data == "stop")
 async def stop(callback: types.CallbackQuery):
     user_id = callback.from_user.id
@@ -116,6 +166,7 @@ async def stop(callback: types.CallbackQuery):
     if user and user['partner_id']:
         await update_user(user['partner_id'], partner_id=None, state='menu')
         await bot.send_message(user['partner_id'], "Собеседник завершил чат.")
+    searching_users.discard(user_id)
     await update_user(user_id, partner_id=None, state='menu')
     await callback.message.edit_text("Чат завершён.", reply_markup=get_main_menu())
 
@@ -124,27 +175,7 @@ async def next_chat(callback: types.CallbackQuery):
     await stop(callback)
     await search(callback)
 
-@dp.callback_query(lambda c: c.data == "report")
-async def report(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
-    user = await get_user(user_id)
-    if user and user['partner_id']:
-        await add_report(user_id, user['partner_id'])
-        count = await get_reports_count(user['partner_id'])
-        if count >= 3:
-            await ban_user(user['partner_id'])
-            await bot.send_message(user['partner_id'], "Ты забанен за жалобы.")
-        await bot.send_message(MODERATOR_ID, f"Жалоба: {user_id} → {user['partner_id']} (всего: {count})")
-    await callback.answer("Жалоба отправлена.", show_alert=True)
-
-@dp.message()
-async def handle_message(message: types.Message):
-    user_id = message.from_user.id
-    user = await get_user(user_id)
-    if user and user['state'] == 'chat' and user['partner_id']:
-        await bot.send_message(user['partner_id'], message.text)
-
-# --- МОДЕРАЦИЯ (ИСПРАВЛЕНО) ---
+# --- МОДЕРАЦИЯ (РАБОТАЕТ!) ---
 @dp.message(Command("mod"))
 async def mod_panel(message: types.Message):
     if message.from_user.id != MODERATOR_ID:
@@ -168,6 +199,7 @@ async def ban_cmd(message: types.Message):
         tg_id = int(message.text.split()[1])
         await ban_user(tg_id)
         await message.answer(f"{tg_id} забанен на 24ч.")
+        await bot.send_message(tg_id, "Ты забанен модератором.")
     except:
         await message.answer("Использование: /ban ID")
 
@@ -206,7 +238,7 @@ async def on_startup(app):
     await init_db()
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
-    print("Бот запущен! Кнопки внизу, /mod работает!")
+    print("ФИНАЛЬНАЯ ВЕРСИЯ ЗАПУЩЕНА!")
 
 def main():
     app = web.Application()

@@ -107,6 +107,100 @@ async def back_to_menu(message: types.Message):
     await update_user(message.from_user.id, state='menu')
     await message.answer("Готов? Нажми кнопку.", reply_markup=get_main_menu())
 
+# --- СПИСОК МОДЕРАТОРОВ ---
+MODERATORS = [684261784]  # сюда добавь свои ID через запятую
+
+# --- СОСТОЯНИЕ МОДЕРА ---
+moderator_mode = {}
+
+# --- ВХОД В РЕЖИМ МОДЕРАТОРА ---
+@dp.message(Command("модератор"))
+async def moderator_login(message: types.Message):
+    user_id = message.from_user.id
+    if user_id not in MODERATORS:
+        await message.answer("⛔ У тебя нет прав модератора.")
+        return
+
+    moderator_mode[user_id] = True
+    await message.answer(
+        "✅ Режим модератора активирован.\n\n"
+        "Доступные команды:\n"
+        "/жалобы — показать последние 10 жалоб\n"
+        "/баны — показать всех забаненных\n"
+        "/бан <id> — забанить пользователя\n"
+        "/анбан <id> — разбанить пользователя\n"
+        "/выйти — выйти из режима модератора"
+    )
+
+# --- ВЫХОД ИЗ РЕЖИМА ---
+@dp.message(Command("выйти"))
+async def moderator_exit(message: types.Message):
+    if message.from_user.id in moderator_mode:
+        del moderator_mode[message.from_user.id]
+        await message.answer("👋 Режим модератора отключён.")
+    else:
+        await message.answer("Ты не в режиме модератора.")
+
+# --- ПРОСМОТР ЖАЛОБ ---
+@dp.message(Command("жалобы"))
+async def show_reports(message: types.Message):
+    if message.from_user.id not in MODERATORS:
+        return
+    from database import asyncpg, DATABASE_URL
+    conn = await asyncpg.connect(DATABASE_URL)
+    rows = await conn.fetch("SELECT * FROM reports ORDER BY id DESC LIMIT 10")
+    await conn.close()
+    if not rows:
+        await message.answer("📭 Жалоб нет.")
+        return
+    text = "\n".join(
+        [f"{r['id']}. От: {r['from_id']} ➜ На: {r['to_id']} ({r['timestamp']:%d.%m %H:%M})"
+         for r in rows]
+    )
+    await message.answer(f"📋 Последние жалобы:\n\n{text}")
+
+# --- ПРОСМОТР БАНОВ ---
+@dp.message(Command("баны"))
+async def show_bans(message: types.Message):
+    if message.from_user.id not in MODERATORS:
+        return
+    from database import asyncpg, DATABASE_URL
+    conn = await asyncpg.connect(DATABASE_URL)
+    rows = await conn.fetch("SELECT * FROM bans ORDER BY until DESC")
+    await conn.close()
+    if not rows:
+        await message.answer("✅ Никто не забанен.")
+        return
+    text = "\n".join([f"{r['tg_id']} — до {r['until']:%d.%m %H:%M}" for r in rows])
+    await message.answer(f"🚫 Заблокированные:\n\n{text}")
+
+# --- БАН / АНБАН ---
+@dp.message(lambda m: m.text.startswith("/бан "))
+async def ban_user_cmd(message: types.Message):
+    if message.from_user.id not in MODERATORS:
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("❗ Укажи ID: /бан 123456789")
+        return
+    tg_id = int(parts[1])
+    from database import ban_user
+    await ban_user(tg_id)
+    await message.answer(f"🚫 Пользователь {tg_id} забанен на 24 часа.")
+
+@dp.message(lambda m: m.text.startswith("/анбан "))
+async def unban_user_cmd(message: types.Message):
+    if message.from_user.id not in MODERATORS:
+        return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("❗ Укажи ID: /анбан 123456789")
+        return
+    tg_id = int(parts[1])
+    from database import unban_user
+    await unban_user(tg_id)
+    await message.answer(f"✅ Пользователь {tg_id} разбанен.")
+
 # --- ПОИСК ---
 @dp.message(lambda m: m.text == "Найти собеседника")
 async def search(message: types.Message):
@@ -229,107 +323,6 @@ async def handle_messages(message: types.Message):
     # --- ОБЫЧНЫЕ СООБЩЕНИЯ ---
     if user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
-
-# --- МОДЕРАТОРСКИЙ РЕЖИМ ---
-
-def get_moderator_menu():
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text="📋 Жалобы"), KeyboardButton(text="🚫 Бан"), KeyboardButton(text="♻️ Разбан")],
-            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="⬅️ Выйти из режима модератора")]
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выбери действие..."
-    )
-
-@dp.message(Command("moderator"))
-async def enter_moderator_mode(message: types.Message):
-    if message.from_user.id != MODERATOR_ID:
-        await message.answer("⛔ У тебя нет прав модератора.")
-        return
-    await update_user(message.from_user.id, state="moderator")
-    await message.answer("🔐 Режим модератора активирован.", reply_markup=get_moderator_menu())
-
-# --- Выход из режима ---
-@dp.message(lambda m: m.text == "⬅️ Выйти из режима модератора")
-async def exit_moderator_mode(message: types.Message):
-    await update_user(message.from_user.id, state="menu")
-    await message.answer("✅ Режим модератора выключен.", reply_markup=get_main_menu())
-
-# --- Просмотр жалоб ---
-@dp.message(lambda m: m.text == "📋 Жалобы")
-async def show_reports(message: types.Message):
-    if message.from_user.id != MODERATOR_ID:
-        return
-    conn = await asyncpg.connect(DATABASE_URL)
-    rows = await conn.fetch('SELECT * FROM reports ORDER BY id DESC LIMIT 10')
-    await conn.close()
-    if not rows:
-        await message.answer("Жалоб пока нет.")
-        return
-    text = "\n\n".join([f"#{r['id']} | От: {r['from_id']} → На: {r['to_id']} | {r['timestamp']:%d.%m %H:%M}" for r in rows])
-    await message.answer(f"📋 Последние жалобы:\n\n{text}")
-
-# --- Бан пользователя ---
-@dp.message(lambda m: m.text == "🚫 Бан")
-async def ask_ban_id(message: types.Message):
-    if message.from_user.id != MODERATOR_ID:
-        return
-    await update_user(message.from_user.id, state="ban_input")
-    await message.answer("Введи ID пользователя, которого нужно забанить:", reply_markup=ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="⬅️ Выйти из режима модератора")]],
-        resize_keyboard=True
-    ))
-
-# --- Разбан ---
-@dp.message(lambda m: m.text == "♻️ Разбан")
-async def ask_unban_id(message: types.Message):
-    if message.from_user.id != MODERATOR_ID:
-        return
-    await update_user(message.from_user.id, state="unban_input")
-    await message.answer("Введи ID пользователя, которого нужно разбанить:", reply_markup=ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="⬅️ Выйти из режима модератора")]],
-        resize_keyboard=True
-    ))
-
-# --- Ввод ID для бана/разбана ---
-@dp.message()
-async def handle_moderator_actions(message: types.Message):
-    user = await get_user(message.from_user.id)
-    if not user or user["state"] not in ["ban_input", "unban_input"]:
-        return
-
-    target_id = message.text.strip()
-    if not target_id.isdigit():
-        await message.answer("Некорректный ID.")
-        return
-    target_id = int(target_id)
-
-    if user["state"] == "ban_input":
-        await ban_user(target_id)
-        await message.answer(f"🚫 Пользователь {target_id} забанен.", reply_markup=get_moderator_menu())
-        await bot.send_message(target_id, "Ты был забанен модератором.", reply_markup=get_main_menu())
-
-    elif user["state"] == "unban_input":
-        await unban_user(target_id)
-        await message.answer(f"♻️ Пользователь {target_id} разбанен.", reply_markup=get_moderator_menu())
-        await bot.send_message(target_id, "Твой бан снят. Повтори /start.", reply_markup=get_main_menu())
-
-    await update_user(message.from_user.id, state="moderator")
-
-# --- Статистика ---
-@dp.message(lambda m: m.text == "📊 Статистика")
-async def show_stats(message: types.Message):
-    if message.from_user.id != MODERATOR_ID:
-        return
-    total, active, reports = await get_stats()
-    await message.answer(
-        f"📊 Статистика:\n\n"
-        f"👥 Всего пользователей: {total}\n"
-        f"💬 Активных чатов: {active}\n"
-        f"⚠️ Жалоб: {reports}"
-    )
-
 
 # --- Запуск ---
 async def on_startup(app):

@@ -4,6 +4,7 @@ from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
+# --- Инициализация БД ---
 async def init_db():
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute('''
@@ -26,6 +27,7 @@ async def init_db():
     ''')
     await conn.close()
 
+# --- Пользователь ---
 async def get_user(tg_id):
     conn = await asyncpg.connect(DATABASE_URL)
     row = await conn.fetchrow('SELECT * FROM users WHERE tg_id = $1', tg_id)
@@ -43,6 +45,7 @@ async def update_user(tg_id, **kwargs):
     ''', *values)
     await conn.close()
 
+# --- Поиск партнёра ---
 async def find_partner(exclude_id):
     conn = await asyncpg.connect(DATABASE_URL)
     row = await conn.fetchrow('''
@@ -53,6 +56,7 @@ async def find_partner(exclude_id):
     await conn.close()
     return row['tg_id'] if row else None
 
+# --- Жалобы ---
 async def add_report(from_id, to_id):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute('INSERT INTO reports (from_id, to_id) VALUES ($1, $2)', from_id, to_id)
@@ -64,6 +68,7 @@ async def get_reports_count(tg_id):
     await conn.close()
     return count
 
+# --- Баны ---
 async def ban_user(tg_id, hours=24):
     conn = await asyncpg.connect(DATABASE_URL)
     await conn.execute('''
@@ -83,6 +88,7 @@ async def unban_user(tg_id):
     await conn.execute('DELETE FROM bans WHERE tg_id = $1', tg_id)
     await conn.close()
 
+# --- Статистика ---
 async def get_stats():
     conn = await asyncpg.connect(DATABASE_URL)
     total_users = await conn.fetchval('SELECT COUNT(*) FROM users')

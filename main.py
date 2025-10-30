@@ -2,7 +2,7 @@ import asyncio
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 from aiohttp import web
 import os
@@ -18,25 +18,35 @@ dp = Dispatcher()
 
 logging.basicConfig(level=logging.INFO)
 
-# --- Клавиатуры ---
+# --- КЛАВИАТУРЫ ПОД ПОЛЕМ ВВОДА ---
 def get_main_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Найти собеседника", callback_data="search")],
-        [InlineKeyboardButton(text="Правила", callback_data="rules")],
-        [InlineKeyboardButton(text="Мой ID", callback_data="my_id")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("Найти собеседника")],
+            [KeyboardButton("Правила"), KeyboardButton("Мой ID")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Выбери действие..."
+    )
 
 def get_searching_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Отмена", callback_data="cancel_search")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("Отмена")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Ищем собеседника..."
+    )
 
 def get_chat_menu():
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Стоп", callback_data="stop")],
-        [InlineKeyboardButton(text="Следующий", callback_data="next")],
-        [InlineKeyboardButton(text="Пожаловаться", callback_data="report")]
-    ])
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton("Стоп"), KeyboardButton("Следующий")],
+            [KeyboardButton("Пожаловаться")]
+        ],
+        resize_keyboard=True,
+        input_field_placeholder="Напиши сообщение..."
+    )
 
 # --- Проверка бана ---
 async def check_ban(user_id):
@@ -63,6 +73,7 @@ async def start_search_loop():
         else:
             await asyncio.sleep(1)
 
+# --- СТАРТ ---
 @dp.message(Command("start"))
 async def start(message: types.Message):
     user_id = message.from_user.id
@@ -78,23 +89,25 @@ async def start(message: types.Message):
         reply_markup=get_main_menu()
     )
 
-@dp.callback_query(lambda c: c.data == "my_id")
-async def my_id(callback: types.CallbackQuery):
-    await callback.answer(f"Твой ID: {callback.from_user.id}", show_alert=True)
+# --- КНОПКИ ПО ТЕКСТУ ---
+@dp.message(lambda m: m.text == "Мой ID")
+async def my_id(message: types.Message):
+    await message.answer(f"Твой ID: {message.from_user.id}")
 
-@dp.callback_query(lambda c: c.data == "rules")
-async def rules(callback: types.CallbackQuery):
-    await callback.message.edit_text(
+@dp.message(lambda m: m.text == "Правила")
+async def rules(message: types.Message):
+    await message.answer(
         "Правила:\n1. Нет мата\n2. Нет спама\n3. Нет рекламы\n4. Уважение\n\nНарушение = бан",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="back_to_menu")]
-        ])
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton("Назад")]],
+            resize_keyboard=True
+        )
     )
 
-@dp.callback_query(lambda c: c.data == "back_to_menu")
-async def back_to_menu(callback: types.CallbackQuery):
-    await update_user(callback.from_user.id, state='menu')
-    await callback.message.edit_text(
+@dp.message(lambda m: m.text == "Назад")
+async def back_to_menu(message: types.Message):
+    await update_user(message.from_user.id, state='menu')
+    await message.answer(
         "Привет! Анонимный чат на двоих\n\n"
         "• Полная анонимность\n"
         "• Реальные собеседники\n"
@@ -103,71 +116,63 @@ async def back_to_menu(callback: types.CallbackQuery):
         reply_markup=get_main_menu()
     )
 
-# --- ПОИСК: КНОПКА "ОТМЕНА" ВНИЗУ ---
-@dp.callback_query(lambda c: c.data == "search")
-async def search(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+# --- ПОИСК ---
+@dp.message(lambda m: m.text == "Найти собеседника")
+async def search(message: types.Message):
+    user_id = message.from_user.id
     if await check_ban(user_id):
         return
     
     if user_id in searching_queue:
-        await callback.answer("Ты уже в очереди!")
+        await message.answer("Ты уже в очереди!")
         return
     
     await update_user(user_id, state='searching')
     searching_queue.append(user_id)
     
-    await callback.message.delete()
-    await bot.send_message(
-        user_id,
+    await message.answer(
         "Ищем собеседника...\n\nОжидаем ещё одного человека.",
         reply_markup=get_searching_menu()
     )
 
-# --- ОТМЕНА ПОИСКА: КНОПКИ ВНИЗУ ---
-@dp.callback_query(lambda c: c.data == "cancel_search")
-async def cancel_search(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+# --- ОТМЕНА ПОИСКА ---
+@dp.message(lambda m: m.text == "Отмена")
+async def cancel_search(message: types.Message):
+    user_id = message.from_user.id
     if user_id in searching_queue:
         searching_queue.remove(user_id)
     await update_user(user_id, state='menu')
-    
-    await callback.message.delete()
-    await bot.send_message(user_id, "Поиск отменён.", reply_markup=get_main_menu())
+    await message.answer("Поиск отменён.", reply_markup=get_main_menu())
 
 # --- ЖАЛОБА ---
-@dp.callback_query(lambda c: c.data == "report")
-async def report(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+@dp.message(lambda m: m.text == "Пожаловаться")
+async def report(message: types.Message):
+    user_id = message.from_user.id
     user = await get_user(user_id)
     if not user or not user['partner_id']:
-        await callback.answer("Чат завершён.", show_alert=True)
+        await message.answer("Чат завершён.")
         return
     
-    await callback.message.delete()
-    await bot.send_message(
-        user_id,
+    await message.answer(
         "Напиши причину жалобы (1–100 символов):",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Отмена", callback_data="cancel_report")]
-        ])
+        reply_markup=ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton("Отмена")]],
+            resize_keyboard=True
+        )
     )
     await update_user(user_id, state='reporting')
 
-# --- ОТМЕНА ЖАЛОБЫ: КНОПКИ ВНИЗУ ---
-@dp.callback_query(lambda c: c.data == "cancel_report")
-async def cancel_report(callback: types.CallbackQuery):
-    await update_user(callback.from_user.id, state='chat')
-    await callback.message.delete()
-    await bot.send_message(
-        callback.from_user.id,
-        "Жалоба отменена.",
-        reply_markup=get_chat_menu()
-    )
+# --- ОТМЕНА ЖАЛОБЫ (ТОЛЬКО В reporting) ---
+@dp.message(lambda m: m.text == "Отмена")
+async def cancel_report(message: types.Message):
+    user = await get_user(message.from_user.id)
+    if user and user['state'] == 'reporting':
+        await update_user(message.from_user.id, state='chat')
+        await message.answer("Жалоба отменена.", reply_markup=get_chat_menu())
 
-# --- ОБРАБОТКА ПРИЧИНЫ ЖАЛОБЫ И ЧАТА ---
+# --- ОБРАБОТКА СООБЩЕНИЙ ---
 @dp.message(lambda m: m.text)
-async def handle_report_or_chat(message: types.Message):
+async def handle_message(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user:
@@ -197,26 +202,25 @@ async def handle_report_or_chat(message: types.Message):
     if user['state'] == 'chat' and user['partner_id']:
         await bot.send_message(user['partner_id'], message.text)
 
-# --- СТОП: КНОПКИ ВНИЗУ ---
-@dp.callback_query(lambda c: c.data == "stop")
-async def stop(callback: types.CallbackQuery):
-    user_id = callback.from_user.id
+# --- СТОП ---
+@dp.message(lambda m: m.text == "Стоп")
+async def stop(message: types.Message):
+    user_id = message.from_user.id
     user = await get_user(user_id)
     if user and user['partner_id']:
         partner_id = user['partner_id']
         await update_user(partner_id, partner_id=None, state='menu')
-        await bot.send_message(partner_id, "Собеседник завершил чат.", reply_markup=None)
+        await bot.send_message(partner_id, "Собеседник завершил чат.")
     if user_id in searching_queue:
         searching_queue.remove(user_id)
     await update_user(user_id, partner_id=None, state='menu')
-    
-    await callback.message.delete()
-    await bot.send_message(user_id, "Чат завершён.", reply_markup=get_main_menu())
+    await message.answer("Чат завершён.", reply_markup=get_main_menu())
 
-@dp.callback_query(lambda c: c.data == "next")
-async def next_chat(callback: types.CallbackQuery):
-    await stop(callback)
-    await search(callback)
+# --- СЛЕДУЮЩИЙ ---
+@dp.message(lambda m: m.text == "Следующий")
+async def next_chat(message: types.Message):
+    await stop(message)
+    await search(message)
 
 # --- Запуск ---
 async def on_startup(app):
@@ -224,7 +228,7 @@ async def on_startup(app):
     webhook_url = f"https://anonymous-chat-bot-7f1b.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
     asyncio.create_task(start_search_loop())
-    print("БОТ ЗАПУЩЕН! КНОПКИ ВНИЗУ, ЧАТ РАБОТАЕТ!")
+    print("БОТ ЗАПУЩЕН! КНОПКИ ПОД ПОЛЕМ ВВОДА — КАК НА ФОТО!")
 
 def main():
     app = web.Application()

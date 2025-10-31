@@ -7,7 +7,6 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 pool = None
 
-# --- Инициализация БД ---
 async def init_db():
     global pool
     try:
@@ -41,7 +40,6 @@ async def init_db():
         logging.error(f"Database initialization failed: {e}")
         raise
 
-# --- Пользователь ---
 async def get_user(tg_id):
     try:
         async with pool.acquire() as conn:
@@ -69,7 +67,6 @@ async def update_user(tg_id, **kwargs):
     except Exception as e:
         logging.error(f"Error updating user {tg_id}: {e}")
 
-# --- Жалобы ---
 async def add_report(reporter_id, reported_id, reason=None):
     try:
         async with pool.acquire() as conn:
@@ -110,7 +107,6 @@ async def get_reports_today():
         logging.error(f"Error getting today's reports: {e}")
         return 0
 
-# --- Баны ---
 async def ban_user(tg_id, hours=24):
     try:
         async with pool.acquire() as conn:
@@ -122,7 +118,7 @@ async def ban_user(tg_id, hours=24):
             
             await conn.execute(
                 'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
-                'banned', tg_id
+                'menu', tg_id
             )
     except Exception as e:
         logging.error(f"Error banning user {tg_id}: {e}")
@@ -146,7 +142,6 @@ async def unban_user(tg_id):
     except Exception as e:
         logging.error(f"Error unbanning user {tg_id}: {e}")
 
-# --- Статистика ---
 async def get_all_users():
     try:
         async with pool.acquire() as conn:
@@ -162,21 +157,7 @@ async def get_stats():
             total_users = await conn.fetchval('SELECT COUNT(*) FROM users')
             active_chats = await conn.fetchval("SELECT COUNT(*) FROM users WHERE state = 'chat'")
             total_reports = await conn.fetchval('SELECT COUNT(*) FROM reports')
-            return total_users, active_chats // 2, total_reports  # Делим на 2 для количества чатов
+            return total_users, active_chats // 2, total_reports
     except Exception as e:
         logging.error(f"Error getting stats: {e}")
         return 0, 0, 0
-
-# --- Очистка неактивных пользователей ---
-async def cleanup_inactive_users(hours=1):
-    try:
-        async with pool.acquire() as conn:
-            result = await conn.execute('''
-                DELETE FROM users 
-                WHERE last_active < NOW() - INTERVAL \'1 hour\' * $1 
-                AND state != 'chat'
-            ''', hours)
-            return result
-    except Exception as e:
-        logging.error(f"Error cleaning inactive users: {e}")
-        return "0"

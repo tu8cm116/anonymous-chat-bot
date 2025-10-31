@@ -20,7 +20,9 @@ async def init_db():
                     last_active TIMESTAMP DEFAULT NOW(),
                     created_at TIMESTAMP DEFAULT NOW()
                 );
-                
+            ''')
+
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS reports (
                     id SERIAL PRIMARY KEY,
                     from_id BIGINT,
@@ -28,13 +30,21 @@ async def init_db():
                     reason TEXT,
                     timestamp TIMESTAMP DEFAULT NOW()
                 );
-                
+            ''')
+
+            await conn.execute('''
                 CREATE TABLE IF NOT EXISTS bans (
                     tg_id BIGINT PRIMARY KEY,
                     until TIMESTAMP,
                     created_at TIMESTAMP DEFAULT NOW()
                 );
             ''')
+
+            # ДОБАВЛЯЕМ КОЛОНКУ reason, ЕСЛИ ЕЁ НЕТ
+            await conn.execute('''
+                ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT;
+            ''')
+
         logging.info("Database initialized successfully")
     except Exception as e:
         logging.error(f"Database initialization failed: {e}")
@@ -132,20 +142,17 @@ async def ban_user(tg_id, hours=24):
 async def ban_user_permanent(tg_id):
     try:
         async with pool.acquire() as conn:
-            # Устанавливаем бан на 100 лет (фактически навсегда)
             await conn.execute('''
                 INSERT INTO bans (tg_id, until)
-                VALUES ($1, NOW() + INTERVAL \'100 years\')
+                VALUES ($1, NOW() + INTERVAL '100 years')
                 ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
             ''', tg_id)
-            
+           
             await conn.execute(
                 'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
                 'menu', tg_id
             )
-            
-            # УДАЛЯЕМ ВСЕ ЖАЛОБЫ НА ПОЛЬЗОВАТЕЛЯ ПРИ РАЗБАНЕ
-            await conn.execute('DELETE FROM reports WHERE to_id = $1', tg_id)
+            # НЕ УДАЛЯЕМ ЖАЛОБЫ ПРИ БАНЕ!
     except Exception as e:
         logging.error(f"Error permanent banning user {tg_id}: {e}")
 
@@ -165,7 +172,7 @@ async def unban_user(tg_id):
     try:
         async with pool.acquire() as conn:
             await conn.execute('DELETE FROM bans WHERE tg_id = $1', tg_id)
-            # УДАЛЯЕМ ВСЕ ЖАЛОБЫ НА ПОЛЬЗОВАТЕЛЯ ПРИ РАЗБАНЕ
+            # УДАЛЯЕМ ЖАЛОБЫ ТОЛЬКО ПРИ РАЗБАНЕ
             await conn.execute('DELETE FROM reports WHERE to_id = $1', tg_id)
     except Exception as e:
         logging.error(f"Error unbanning user {tg_id}: {e}")

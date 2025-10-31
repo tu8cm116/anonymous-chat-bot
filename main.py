@@ -11,6 +11,7 @@ from aiohttp import web
 import os
 from dotenv import load_dotenv
 from database import *
+
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -64,6 +65,9 @@ class RandomMatchQueue:
         return len(self._users)
 
 searching_queue = RandomMatchQueue()
+
+# === Пары, которые НЕЛЬЗЯ соединять в ЭТОМ цикле ===
+recent_partners = set()
 
 # --- Клавиатуры ---
 def get_main_menu():
@@ -154,6 +158,13 @@ async def start_search_loop():
         while True:
             user1, user2 = await searching_queue.get_random_pair()
             if user1 and user2:
+                pair = tuple(sorted([user1, user2]))
+                if pair in recent_partners:
+                    await searching_queue.add(user1)
+                    await searching_queue.add(user2)
+                    await asyncio.sleep(0.1)
+                    continue
+
                 try:
                     u1_data = await get_user(user1)
                     u2_data = await get_user(user2)
@@ -163,6 +174,9 @@ async def start_search_loop():
                         now = datetime.now()
                         await update_user(user1, partner_id=user2, state='chat', chat_start=now)
                         await update_user(user2, partner_id=user1, state='chat', chat_start=now)
+
+                        recent_partners.discard(pair)
+
                         await safe_send_message(user1,
                             "Случайный собеседник найден! Начинайте общение.\n\n"
                             "Теперь можно отправлять:\n"
@@ -184,6 +198,9 @@ async def start_search_loop():
                     logging.error(f"Error pairing users: {e}")
                     await searching_queue.add(user1)
                     await searching_queue.add(user2)
+            else:
+                if len(recent_partners) > 1000:
+                    recent_partners.clear()
             await asyncio.sleep(0.5)
     except asyncio.CancelledError:
         logging.info("Search loop stopped")
@@ -302,12 +319,9 @@ async def cmd_user(message: types.Message):
 async def user_stats(message: types.Message):
     user_id = message.from_user.id
     total_chats, total_seconds = await get_user_chat_stats(user_id)
-
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
-
     time_str = f"{hours}ч {minutes}м" if hours > 0 else f"{minutes}м"
-
     text = (
         f"ТВОЯ СТАТИСТИКА\n\n"
         f"Чатов: {total_chats}\n"
@@ -351,10 +365,12 @@ async def search(message: types.Message):
     if user_data and user_data['state'] == 'chat':
         await message.answer("Ты уже в чате! Заверши текущий разговор сначала.")
         return
+
     await update_user(user_id, state='searching')
     added = await searching_queue.add(user_id)
     if added:
-        await message.answer("Ищем случайного собеседника...", reply_markup=get_searching_menu())
+        await message.delete()
+        await safe_send_message(user_id, "Ищем случайного собеседника...", reply_markup=get_searching_menu())
     else:
         await message.answer("Ты уже в очереди поиска!")
 
@@ -390,40 +406,63 @@ async def handle_chat_buttons(message: types.Message):
     chat_start = user.get('chat_start')
     duration_text = ""
 
-    if chat_start:
+    # === Считаем время чата ===
+    if chat_start and partner_id:
         duration = datetime.now() - chat_start
         total_seconds = int(duration.total_seconds())
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         duration_text = f"{minutes}м {seconds}с"
-
-        # Логируем в БД
         await log_chat_end(user_id, partner_id, duration)
 
+    # === Стоп ===
     if message.text == "Стоп":
         await update_user(user_id, partner_id=None, state='menu', chat_start=None)
+        text_user = "Чат завершён."
+        if duration_text:
+            text_user += f"\nВремя: {duration_text}"
+
         if partner_id:
             await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
-            await safe_send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
+            text_partner = "Собеседник завершил чат."
+            if duration_text:
+                text_partner += f"\nВремя: {duration_text}"
+            await safe_send_message(partner_id, text_partner, reply_markup=get_main_menu())
+
         await searching_queue.remove(user_id)
-        text = "Чат завершён."
-        if duration_text:
-            text += f"\nВремя: {duration_text}"
-        await message.answer(text, reply_markup=get_main_menu())
+        await message.answer(text_user, reply_markup=get_main_menu())
         return
 
+    # === Следующий ===
     if message.text == "Следующий":
+        # Блокируем пару на 1 цикл
         if partner_id:
-            await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
-            await safe_send_message(partner_id, "Собеседник ищет нового партнёра.", reply_markup=get_main_menu())
+            pair = tuple(sorted([user_id, partner_id]))
+            recent_partners.add(pair)
+
+        # Текст для инициатора
+        text_initiator = "Ищем нового собеседника..."
+        if duration_text:
+            text_initiator += f"\nБыло: {duration_text}"
+
+        # Текст для партнёра
+        text_partner = "Собеседник ищет нового партнёра.\nНачинаем поиск..."
+        if duration_text:
+            text_partner += f"\nБыло: {duration_text}"
+
+        # Оба в поиск
         await update_user(user_id, partner_id=None, state='searching', chat_start=None)
         await searching_queue.add(user_id)
-        text = "Ищем нового собеседника..."
-        if duration_text:
-            text += f"\nБыло: {duration_text}"
-        await message.answer(text, reply_markup=get_searching_menu())
+        await message.answer(text_initiator, reply_markup=get_searching_menu())
+
+        if partner_id:
+            await update_user(partner_id, partner_id=None, state='searching', chat_start=None)
+            await searching_queue.add(partner_id)
+            await safe_send_message(partner_id, text_partner, reply_markup=get_searching_menu())
+
         return
 
+    # === Пожаловаться ===
     if message.text == "Пожаловаться":
         if not partner_id:
             await message.answer("Нет активного чата для жалобы.")

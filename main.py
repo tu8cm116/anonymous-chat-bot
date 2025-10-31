@@ -302,8 +302,8 @@ async def ban_command(message: types.Message):
             return
             
         await ban_user(target_id)
-        await message.answer(f"✅ Пользователь {target_id} забанен на 24 часа.")
-        await safe_send_message(target_id, "🚫 Вы были заблокированы модератором на 24 часа.")
+        await message.answer(f"✅ Пользователь {target_id} забанен навсегда.")
+        await safe_send_message(target_id, "🚫 Вы были заблокированы модератором навсегда.")
         
     except ValueError:
         await message.answer("❌ Неверный формат ID.")
@@ -455,7 +455,7 @@ async def handle_chat_buttons(message: types.Message):
         return
 
 # ================================
-#        СИСТЕМА ЖАЛОБ
+#        СИСТЕМА ЖАЛОБ (ИСПРАВЛЕННАЯ)
 # ================================
 
 @dp.message()
@@ -471,6 +471,11 @@ async def handle_messages(message: types.Message):
     if user['state'] == 'reporting':
         reason = message.text.strip()
         
+        # Проверяем длину причины
+        if not reason or len(reason) < 5:
+            await message.answer("❌ Причина жалобы должна содержать не менее 5 символов. Попробуй еще раз:")
+            return
+            
         partner_id = user['partner_id']
         if not partner_id:
             await message.answer("❌ Чат уже завершён.")
@@ -488,11 +493,11 @@ async def handle_messages(message: types.Message):
         # ИСПРАВЛЕНО: сообщение о жалобе
         await safe_send_message(partner_id, "❌ Чат завершён из-за жалобы от собеседника.", reply_markup=get_main_menu())
         
-        # НЕ БАНИМ АВТОМАТИЧЕСКИ - ТОЛЬКО УВЕДОМЛЯЕМ МОДЕРАТОРА
+        # ПРОВЕРЯЕМ КОЛИЧЕСТВО ЖАЛОБ И БАНИМ ПРИ 5 ЖАЛОБАХ
         reports_count = await get_reports_count(partner_id)
         
+        # УВЕДОМЛЯЕМ МОДЕРАТОРА
         if MODERATOR_ID:
-            # ИСПРАВЛЕНО: показываем реальные ID модератору
             await safe_send_message(
                 MODERATOR_ID,
                 f"🚨 НОВАЯ ЖАЛОБА\n\n"
@@ -501,6 +506,17 @@ async def handle_messages(message: types.Message):
                 f"Причина: {reason}\n"
                 f"Всего жалоб на пользователя: {reports_count}"
             )
+            
+            # АВТОМАТИЧЕСКИЙ БАН ПРИ 5 ЖАЛОБАХ
+            if reports_count >= 5:
+                await ban_user_permanent(partner_id)
+                await safe_send_message(
+                    MODERATOR_ID,
+                    f"🔨 АВТОМАТИЧЕСКИЙ БАН!\n"
+                    f"Пользователь {partner_id} забанен навсегда за 5 жалоб."
+                )
+                await safe_send_message(partner_id, "🚫 Вы были забанены навсегда за многочисленные жалобы.")
+        
         return
 
     # Пересылка сообщений в чате (ВСЕ ТИПЫ МЕДИА)
@@ -512,7 +528,7 @@ async def handle_messages(message: types.Message):
             await message.answer("❌ Ошибка отправки сообщения.")
 
 # ================================
-#        МОДЕРАТОРСКАЯ ПАНЕЛЬ
+#        МОДЕРАТОРСКАЯ ПАНЕЛЬ (ИСПРАВЛЕННАЯ)
 # ================================
 
 @dp.callback_query(lambda c: c.data.startswith("mod_"))
@@ -562,23 +578,31 @@ async def mod_callbacks(callback: types.CallbackQuery):
         )
 
     elif data == "mod_reports":
-        reports = await get_all_reports()
-        if not reports:
-            await callback.message.edit_text("📝 Жалоб нет.", reply_markup=get_mod_menu())
-            return
-        
-        text = "📝 ПОСЛЕДНИЕ ЖАЛОБЫ:\n\n"
-        for r in reports[:10]:
-            # ИСПРАВЛЕНО: показываем реальные ID модератору
-            reporter_id = r.get('reporter_id') or r.get('from_id')
-            reported_id = r.get('reported_id') or r.get('to_id')
-            text += f"👤 {reporter_id} → {reported_id}\n"
-            text += f"📋 Причина: {r['reason']}\n"
-            text += f"🕒 {r['timestamp'].strftime('%d.%m %H:%M')}\n\n"
-        
-        await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
-        ]))
+        try:
+            reports = await get_all_reports()
+            if not reports:
+                await callback.message.edit_text("📝 Жалоб нет.", reply_markup=get_mod_menu())
+                return
+            
+            text = "📝 ПОСЛЕДНИЕ ЖАЛОБЫ:\n\n"
+            for r in reports[:15]:  # Показываем больше жалоб
+                from_id = r.get('from_id', 'N/A')
+                to_id = r.get('to_id', 'N/A')
+                reason = r.get('reason', 'Нет причины')
+                timestamp = r.get('timestamp')
+                time_str = timestamp.strftime('%d.%m %H:%M') if timestamp else 'N/A'
+                text += f"👤 {from_id} → {to_id}\n"
+                text += f"📋 Причина: {reason}\n"
+                text += f"🕒 {time_str}\n\n"
+            
+            await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
+            ]))
+            await callback.answer("Жалобы загружены")
+        except Exception as e:
+            logging.error(f"Error loading reports: {e}")
+            await callback.message.edit_text("❌ Ошибка загрузки жалоб.", reply_markup=get_mod_menu())
+            await callback.answer("Ошибка")
 
     elif data == "mod_stats":
         total_users, active_chats, total_reports = await get_stats()
@@ -605,9 +629,11 @@ async def mod_callbacks(callback: types.CallbackQuery):
             ])
         )
         await update_user(callback.from_user.id, state='mod_banning')
+        await callback.answer("Введите ID")
 
     elif data == "mod_back":
         await callback.message.edit_text("🛠 МОДЕРАТОРСКАЯ ПАНЕЛЬ", reply_markup=get_mod_menu())
+        await callback.answer("Назад")
 
     await callback.answer()
 
@@ -627,14 +653,14 @@ async def mod_ban_execute(message: types.Message):
             await update_user(message.from_user.id, state='mod_menu')
             return
             
-        await ban_user(target_id)
+        await ban_user_permanent(target_id)
         await message.answer(
-            f"✅ Пользователь {target_id} забанен на 24 часа.", 
+            f"✅ Пользователь {target_id} забанен навсегда.", 
             reply_markup=get_mod_menu()
         )
         await update_user(message.from_user.id, state='mod_menu')
         
-        await safe_send_message(target_id, "🚫 Вы были заблокированы модератором на 24 часа.")
+        await safe_send_message(target_id, "🚫 Вы были заблокированы модератором навсегда.")
         
     except ValueError:
         await message.answer("❌ Неверный формат ID.", reply_markup=get_mod_menu())

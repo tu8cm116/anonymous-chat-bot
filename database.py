@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 import logging
 
 DATABASE_URL = os.getenv("DATABASE_URL")
-
 pool = None
 
 async def init_db():
@@ -40,7 +39,7 @@ async def init_db():
                 );
             ''')
 
-            # ДОБАВЛЯЕМ КОЛОНКУ reason, ЕСЛИ ЕЁ НЕТ
+            # МИГРАЦИЯ: добавляем колонку reason, если её нет
             await conn.execute('''
                 ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT;
             ''')
@@ -66,7 +65,6 @@ async def update_user(tg_id, **kwargs):
         async with pool.acquire() as conn:
             columns = list(kwargs.keys())
             values = list(kwargs.values())
-            
             set_clause = ', '.join([f"{col} = ${i+2}" for i, col in enumerate(columns)])
             query = f'''
                 INSERT INTO users (tg_id, {', '.join(columns)})
@@ -91,7 +89,7 @@ async def get_reports_count(tg_id):
     try:
         async with pool.acquire() as conn:
             return await conn.fetchval(
-                'SELECT COUNT(*) FROM reports WHERE to_id = $1', 
+                'SELECT COUNT(*) FROM reports WHERE to_id = $1',
                 tg_id
             )
     except Exception as e:
@@ -102,13 +100,21 @@ async def get_all_reports():
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch('SELECT * FROM reports ORDER BY timestamp DESC LIMIT 50')
-            reports = []
-            for row in rows:
-                report_dict = dict(row)
-                reports.append(report_dict)
-            return reports
+            return [dict(row) for row in rows]
     except Exception as e:
         logging.error(f"Error getting all reports: {e}")
+        return []
+
+async def get_user_reports(tg_id):
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                'SELECT * FROM reports WHERE to_id = $1 ORDER BY timestamp DESC LIMIT 10',
+                tg_id
+            )
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting user reports: {e}")
         return []
 
 async def get_reports_today():
@@ -121,16 +127,14 @@ async def get_reports_today():
         logging.error(f"Error getting today's reports: {e}")
         return 0
 
-# --- БАН НА 24 ЧАСА ---
 async def ban_user(tg_id, hours=24):
     try:
         async with pool.acquire() as conn:
             await conn.execute('''
                 INSERT INTO bans (tg_id, until)
-                VALUES ($1, NOW() + INTERVAL \'1 hour\' * $2)
+                VALUES ($1, NOW() + INTERVAL '1 hour' * $2)
                 ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
             ''', tg_id, hours)
-            
             await conn.execute(
                 'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
                 'menu', tg_id
@@ -138,7 +142,6 @@ async def ban_user(tg_id, hours=24):
     except Exception as e:
         logging.error(f"Error banning user {tg_id}: {e}")
 
-# --- БАН НАВСЕГДА (ДЛЯ АВТОМАТИЧЕСКОГО БАНА) ---
 async def ban_user_permanent(tg_id):
     try:
         async with pool.acquire() as conn:
@@ -147,12 +150,11 @@ async def ban_user_permanent(tg_id):
                 VALUES ($1, NOW() + INTERVAL '100 years')
                 ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
             ''', tg_id)
-           
             await conn.execute(
                 'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
                 'menu', tg_id
             )
-            # НЕ УДАЛЯЕМ ЖАЛОБЫ ПРИ БАНЕ!
+            # НЕ УДАЛЯЕМ ЖАЛОБЫ ПРИ БАНЕ
     except Exception as e:
         logging.error(f"Error permanent banning user {tg_id}: {e}")
 
@@ -160,7 +162,7 @@ async def is_banned(tg_id):
     try:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
-                'SELECT until FROM bans WHERE tg_id = $1 AND until > NOW()', 
+                'SELECT until FROM bans WHERE tg_id = $1 AND until > NOW()',
                 tg_id
             )
             return row is not None

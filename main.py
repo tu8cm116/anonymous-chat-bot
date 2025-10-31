@@ -306,10 +306,12 @@ async def user_stats(message: types.Message):
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
 
+    time_str = f"{hours}ч {minutes}м" if hours > 0 else f"{minutes}м"
+
     text = (
         f"ТВОЯ СТАТИСТИКА\n\n"
         f"Чатов: {total_chats}\n"
-        f"Общее время: {hours}ч {minutes}м\n"
+        f"Общее время: {time_str}\n"
     )
     await message.answer(text)
 
@@ -386,31 +388,40 @@ async def handle_chat_buttons(message: types.Message):
 
     partner_id = user['partner_id']
     chat_start = user.get('chat_start')
+    duration_text = ""
+
+    if chat_start:
+        duration = datetime.now() - chat_start
+        total_seconds = int(duration.total_seconds())
+        minutes = total_seconds // 60
+        seconds = total_seconds % 60
+        duration_text = f"{minutes}м {seconds}с"
+
+        # Логируем в БД
+        await log_chat_end(user_id, partner_id, duration)
 
     if message.text == "Стоп":
-        if chat_start and partner_id:
-            duration = datetime.now() - chat_start
-            await log_chat_end(user_id, partner_id, duration)
-
         await update_user(user_id, partner_id=None, state='menu', chat_start=None)
         if partner_id:
             await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
             await safe_send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
         await searching_queue.remove(user_id)
-        await message.answer("Чат завершён.", reply_markup=get_main_menu())
+        text = "Чат завершён."
+        if duration_text:
+            text += f"\nВремя: {duration_text}"
+        await message.answer(text, reply_markup=get_main_menu())
         return
 
     if message.text == "Следующий":
-        if chat_start and partner_id:
-            duration = datetime.now() - chat_start
-            await log_chat_end(user_id, partner_id, duration)
-
         if partner_id:
             await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
             await safe_send_message(partner_id, "Собеседник ищет нового партнёра.", reply_markup=get_main_menu())
         await update_user(user_id, partner_id=None, state='searching', chat_start=None)
         await searching_queue.add(user_id)
-        await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
+        text = "Ищем нового собеседника..."
+        if duration_text:
+            text += f"\nБыло: {duration_text}"
+        await message.answer(text, reply_markup=get_searching_menu())
         return
 
     if message.text == "Пожаловаться":

@@ -95,9 +95,6 @@ async def get_all_reports():
             reports = []
             for row in rows:
                 report_dict = dict(row)
-                # Добавляем обратную совместимость
-                report_dict['reporter_id'] = report_dict['from_id']
-                report_dict['reported_id'] = report_dict['to_id']
                 reports.append(report_dict)
             return reports
     except Exception as e:
@@ -114,6 +111,7 @@ async def get_reports_today():
         logging.error(f"Error getting today's reports: {e}")
         return 0
 
+# --- БАН НА 24 ЧАСА ---
 async def ban_user(tg_id, hours=24):
     try:
         async with pool.acquire() as conn:
@@ -129,6 +127,27 @@ async def ban_user(tg_id, hours=24):
             )
     except Exception as e:
         logging.error(f"Error banning user {tg_id}: {e}")
+
+# --- БАН НАВСЕГДА (ДЛЯ АВТОМАТИЧЕСКОГО БАНА) ---
+async def ban_user_permanent(tg_id):
+    try:
+        async with pool.acquire() as conn:
+            # Устанавливаем бан на 100 лет (фактически навсегда)
+            await conn.execute('''
+                INSERT INTO bans (tg_id, until)
+                VALUES ($1, NOW() + INTERVAL \'100 years\')
+                ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
+            ''', tg_id)
+            
+            await conn.execute(
+                'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
+                'menu', tg_id
+            )
+            
+            # УДАЛЯЕМ ВСЕ ЖАЛОБЫ НА ПОЛЬЗОВАТЕЛЯ ПРИ РАЗБАНЕ
+            await conn.execute('DELETE FROM reports WHERE to_id = $1', tg_id)
+    except Exception as e:
+        logging.error(f"Error permanent banning user {tg_id}: {e}")
 
 async def is_banned(tg_id):
     try:
@@ -146,6 +165,8 @@ async def unban_user(tg_id):
     try:
         async with pool.acquire() as conn:
             await conn.execute('DELETE FROM bans WHERE tg_id = $1', tg_id)
+            # УДАЛЯЕМ ВСЕ ЖАЛОБЫ НА ПОЛЬЗОВАТЕЛЯ ПРИ РАЗБАНЕ
+            await conn.execute('DELETE FROM reports WHERE to_id = $1', tg_id)
     except Exception as e:
         logging.error(f"Error unbanning user {tg_id}: {e}")
 

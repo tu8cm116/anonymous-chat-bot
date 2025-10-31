@@ -23,8 +23,8 @@ async def init_db():
                 
                 CREATE TABLE IF NOT EXISTS reports (
                     id SERIAL PRIMARY KEY,
-                    reporter_id BIGINT,
-                    reported_id BIGINT,
+                    from_id BIGINT,
+                    to_id BIGINT,
                     reason TEXT,
                     timestamp TIMESTAMP DEFAULT NOW()
                 );
@@ -71,7 +71,7 @@ async def add_report(reporter_id, reported_id, reason=None):
     try:
         async with pool.acquire() as conn:
             await conn.execute(
-                'INSERT INTO reports (reporter_id, reported_id, reason) VALUES ($1, $2, $3)',
+                'INSERT INTO reports (from_id, to_id, reason) VALUES ($1, $2, $3)',
                 reporter_id, reported_id, reason
             )
     except Exception as e:
@@ -81,7 +81,7 @@ async def get_reports_count(tg_id):
     try:
         async with pool.acquire() as conn:
             return await conn.fetchval(
-                'SELECT COUNT(*) FROM reports WHERE reported_id = $1', 
+                'SELECT COUNT(*) FROM reports WHERE to_id = $1', 
                 tg_id
             )
     except Exception as e:
@@ -92,7 +92,14 @@ async def get_all_reports():
     try:
         async with pool.acquire() as conn:
             rows = await conn.fetch('SELECT * FROM reports ORDER BY timestamp DESC LIMIT 50')
-            return [dict(row) for row in rows]
+            reports = []
+            for row in rows:
+                report_dict = dict(row)
+                # Добавляем обратную совместимость
+                report_dict['reporter_id'] = report_dict['from_id']
+                report_dict['reported_id'] = report_dict['to_id']
+                reports.append(report_dict)
+            return reports
     except Exception as e:
         logging.error(f"Error getting all reports: {e}")
         return []

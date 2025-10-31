@@ -65,9 +65,7 @@ class RandomMatchQueue:
         return len(self._users)
 
 searching_queue = RandomMatchQueue()
-
-# === Пары, которые НЕЛЬЗЯ соединять в ЭТОМ цикле ===
-recent_partners = set()
+recent_partners = set()  # Пары, которые нельзя соединять в этом цикле
 
 # --- Клавиатуры ---
 def get_main_menu():
@@ -115,11 +113,11 @@ async def check_ban(user_id):
 # --- Безопасная отправка ---
 async def safe_send_message(chat_id, text, reply_markup=None):
     try:
-        await bot.send_message(chat_id, text, reply_markup=reply_markup)
-        return True
+        msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
+        return msg
     except Exception as e:
         logging.error(f"Failed to send message to {chat_id}: {e}")
-        return False
+        return None
 
 # --- Пересылка медиа ---
 async def safe_forward_media(chat_id, message):
@@ -177,18 +175,32 @@ async def start_search_loop():
 
                         recent_partners.discard(pair)
 
-                        await safe_send_message(user1,
+                        # Удаляем "Ищем..."
+                        try:
+                            if u1_data.get('last_search_msg_id'):
+                                await bot.delete_message(user1, u1_data['last_search_msg_id'])
+                        except:
+                            pass
+                        try:
+                            if u2_data.get('last_search_msg_id'):
+                                await bot.delete_message(user2, u2_data['last_search_msg_id'])
+                        except:
+                            pass
+
+                        # Отправляем новое
+                        msg1 = await safe_send_message(user1,
                             "Случайный собеседник найден! Начинайте общение.\n\n"
                             "Теперь можно отправлять:\n"
                             "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
                             reply_markup=get_chat_menu()
                         )
-                        await safe_send_message(user2,
+                        msg2 = await safe_send_message(user2,
                             "Случайный собеседник найден! Начинайте общение.\n\n"
                             "Теперь можно отправлять:\n"
                             "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
                             reply_markup=get_chat_menu()
                         )
+
                     else:
                         if u1_data['state'] == 'searching':
                             await searching_queue.add(user1)
@@ -370,7 +382,9 @@ async def search(message: types.Message):
     added = await searching_queue.add(user_id)
     if added:
         await message.delete()
-        await safe_send_message(user_id, "Ищем случайного собеседника...", reply_markup=get_searching_menu())
+        msg = await safe_send_message(user_id, "Ищем случайного собеседника...", reply_markup=get_searching_menu())
+        if msg:
+            await update_user(user_id, last_search_msg_id=msg.message_id)
     else:
         await message.answer("Ты уже в очереди поиска!")
 
@@ -386,7 +400,13 @@ async def cancel_anything(message: types.Message):
         return
     if user['state'] == 'searching':
         await searching_queue.remove(user_id)
-        await update_user(user_id, state='menu')
+        await update_user(user_id, state='menu', last_search_msg_id=None)
+        # Удаляем "Ищем..."
+        try:
+            if user.get('last_search_msg_id'):
+                await bot.delete_message(user_id, user['last_search_msg_id'])
+        except:
+            pass
         await message.answer("Поиск отменён.", reply_markup=get_main_menu())
         return
     await message.answer("Нечего отменять.", reply_markup=get_main_menu())
@@ -406,7 +426,6 @@ async def handle_chat_buttons(message: types.Message):
     chat_start = user.get('chat_start')
     duration_text = ""
 
-    # === Считаем время чата ===
     if chat_start and partner_id:
         duration = datetime.now() - chat_start
         total_seconds = int(duration.total_seconds())
@@ -415,7 +434,6 @@ async def handle_chat_buttons(message: types.Message):
         duration_text = f"{minutes}м {seconds}с"
         await log_chat_end(user_id, partner_id, duration)
 
-    # === Стоп ===
     if message.text == "Стоп":
         await update_user(user_id, partner_id=None, state='menu', chat_start=None)
         text_user = "Чат завершён."
@@ -433,24 +451,19 @@ async def handle_chat_buttons(message: types.Message):
         await message.answer(text_user, reply_markup=get_main_menu())
         return
 
-    # === Следующий ===
     if message.text == "Следующий":
-        # Блокируем пару на 1 цикл
         if partner_id:
             pair = tuple(sorted([user_id, partner_id]))
             recent_partners.add(pair)
 
-        # Текст для инициатора
         text_initiator = "Ищем нового собеседника..."
         if duration_text:
             text_initiator += f"\nБыло: {duration_text}"
 
-        # Текст для партнёра
         text_partner = "Собеседник ищет нового партнёра.\nНачинаем поиск..."
         if duration_text:
             text_partner += f"\nБыло: {duration_text}"
 
-        # Оба в поиск
         await update_user(user_id, partner_id=None, state='searching', chat_start=None)
         await searching_queue.add(user_id)
         await message.answer(text_initiator, reply_markup=get_searching_menu())
@@ -462,7 +475,6 @@ async def handle_chat_buttons(message: types.Message):
 
         return
 
-    # === Пожаловаться ===
     if message.text == "Пожаловаться":
         if not partner_id:
             await message.answer("Нет активного чата для жалобы.")

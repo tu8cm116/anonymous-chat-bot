@@ -6,6 +6,7 @@ from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.enums import ContentType
 from aiohttp import web
 import os
 from dotenv import load_dotenv
@@ -109,11 +110,10 @@ def get_mod_menu():
         [InlineKeyboardButton(text="Жалобы", callback_data="mod_reports")],
         [InlineKeyboardButton(text="Статистика", callback_data="mod_stats")],
         [InlineKeyboardButton(text="Бан по ID", callback_data="mod_ban")],
-        [InlineKeyboardButton(text="Очередь поиска", callback_data="mod_queue")],
-        [InlineKeyboardButton(text="⚡ СБРОСИТЬ ВСЁ", callback_data="mod_reset_all")]
+        [InlineKeyboardButton(text="Очередь поиска", callback_data="mod_queue")]
     ])
 
-# --- Проверка бана (ИСПРАВЛЕНА) ---
+# --- Проверка бана ---
 async def check_ban(user_id):
     # МОДЕРАТОР НИКОГДА НЕ МОЖЕТ БЫТЬ ЗАБАНЕН
     if user_id == MODERATOR_ID:
@@ -131,6 +131,58 @@ async def safe_send_message(chat_id, text, reply_markup=None):
         return True
     except Exception as e:
         logging.error(f"Failed to send message to {chat_id}: {e}")
+        return False
+
+# --- Безопасная пересылка медиа ---
+async def safe_forward_media(chat_id, message):
+    try:
+        # Текст
+        if message.text:
+            await bot.send_message(chat_id, message.text)
+        
+        # Фото
+        elif message.photo:
+            await bot.send_photo(chat_id, message.photo[-1].file_id, caption=message.caption)
+        
+        # Видео
+        elif message.video:
+            await bot.send_video(chat_id, message.video.file_id, caption=message.caption)
+        
+        # Голосовые сообщения
+        elif message.voice:
+            await bot.send_voice(chat_id, message.voice.file_id)
+        
+        # Аудио (музыка)
+        elif message.audio:
+            await bot.send_audio(chat_id, message.audio.file_id, caption=message.caption)
+        
+        # Документы
+        elif message.document:
+            await bot.send_document(chat_id, message.document.file_id, caption=message.caption)
+        
+        # Стикеры
+        elif message.sticker:
+            await bot.send_sticker(chat_id, message.sticker.file_id)
+        
+        # Видео-сообщения (кружочки)
+        elif message.video_note:
+            await bot.send_video_note(chat_id, message.video_note.file_id)
+        
+        # Анимации (GIF)
+        elif message.animation:
+            await bot.send_animation(chat_id, message.animation.file_id, caption=message.caption)
+        
+        # Локация
+        elif message.location:
+            await bot.send_location(chat_id, message.location.latitude, message.location.longitude)
+        
+        # Контакты
+        elif message.contact:
+            await bot.send_contact(chat_id, message.contact.phone_number, message.contact.first_name)
+        
+        return True
+    except Exception as e:
+        logging.error(f"Failed to forward media to {chat_id}: {e}")
         return False
 
 # --- Цикл поиска собеседников ---
@@ -152,11 +204,15 @@ async def start_search_loop():
                         await update_user(user2, partner_id=user1, state='chat')
                         
                         await safe_send_message(user1, 
-                            "🎉 Случайный собеседник найден! Начинайте общение.",
+                            "🎉 Случайный собеседник найден! Начинайте общение.\n\n"
+                            "💬 Теперь можно отправлять:\n"
+                            "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
                             reply_markup=get_chat_menu()
                         )
                         await safe_send_message(user2, 
-                            "🎉 Случайный собеседник найден! Начинайте общение.",
+                            "🎉 Случайный собеседник найден! Начинайте общение.\n\n"
+                            "💬 Теперь можно отправлять:\n"
+                            "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
                             reply_markup=get_chat_menu()
                         )
                         
@@ -201,7 +257,9 @@ async def start(message: types.Message):
     
     await update_user(user_id, state='menu')
     await message.answer(
-        "👋 Привет! Добро пожаловать в анонимный чат!",
+        "👋 Привет! Добро пожаловать в анонимный чат!\n\n"
+        "💬 Теперь можно отправлять:\n"
+        "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
         reply_markup=get_main_menu()
     )
 
@@ -255,7 +313,8 @@ async def rules(message: types.Message):
         "2. 🚫 Запрещён спам и флуд\n"
         "3. 🚫 Запрещена реклама\n"
         "4. 🚫 Запрещены оскорбления\n"
-        "5. ✅ Уважайте собеседника",
+        "5. ✅ Уважайте собеседника\n\n"
+        "💬 Можно отправлять: текст, фото, видео, голосовые, музыку, стикеры, файлы",
         reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True)
     )
 
@@ -281,10 +340,9 @@ async def search(message: types.Message):
     added = await searching_queue.add(user_id)
     
     if added:
-        queue_size = len(searching_queue)
+        # УБРАНО: количество людей в очереди
         await message.answer(
-            f"🔍 Ищем случайного собеседника...\n"
-            f"👥 В очереди: {queue_size} человек",
+            "🔍 Ищем случайного собеседника...",
             reply_markup=get_searching_menu()
         )
     else:
@@ -345,6 +403,8 @@ async def handle_chat_buttons(message: types.Message):
         
         await update_user(user_id, partner_id=None, state='searching')
         await searching_queue.add(user_id)
+        
+        # УБРАНО: количество людей в очереди
         await message.answer("🔄 Ищем нового собеседника...", reply_markup=get_searching_menu())
         return
 
@@ -373,6 +433,7 @@ async def handle_messages(message: types.Message):
         await update_user(user_id, state='menu')
         return
 
+    # Обработка жалобы
     if user['state'] == 'reporting':
         reason = message.text.strip()
         
@@ -406,12 +467,13 @@ async def handle_messages(message: types.Message):
             )
         return
 
-    # Пересылка сообщений в чате
+    # Пересылка сообщений в чате (ВСЕ ТИПЫ МЕДИА)
     if user['state'] == 'chat' and user['partner_id']:
         try:
-            await safe_send_message(user['partner_id'], message.text)
+            await safe_forward_media(user['partner_id'], message)
         except Exception as e:
             logging.error(f"Error forwarding message: {e}")
+            await message.answer("❌ Ошибка отправки сообщения.")
 
 # ================================
 #        МОДЕРАТОРСКАЯ ПАНЕЛЬ
@@ -471,7 +533,10 @@ async def mod_callbacks(callback: types.CallbackQuery):
         
         text = "📝 ПОСЛЕДНИЕ ЖАЛОБЫ:\n\n"
         for r in reports[:10]:
-            text += f"👤 {hash_id(r['reporter_id'])} → {hash_id(r['reported_id'])}\n"
+            # Используем правильные ключи
+            reporter_id = r.get('reporter_id') or r.get('from_id')
+            reported_id = r.get('reported_id') or r.get('to_id')
+            text += f"👤 {hash_id(reporter_id)} → {hash_id(reported_id)}\n"
             text += f"📋 Причина: {r['reason']}\n"
             text += f"🕒 {r['timestamp'].strftime('%d.%m %H:%M')}\n\n"
         
@@ -518,48 +583,6 @@ async def mod_callbacks(callback: types.CallbackQuery):
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
         ]))
-
-    # --- СБРОС ВСЕЙ СТАТИСТИКИ ---
-    elif data == "mod_reset_all":
-        await callback.message.edit_text(
-            "⚠️ ВНИМАНИЕ! Это удалит:\n"
-            "• Все жалобы\n• Все баны\n• Всю статистику\n\n"
-            "Подтвердите сброс:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="✅ ДА, сбросить всё", callback_data="mod_confirm_reset")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="mod_back")]
-            ])
-        )
-
-    elif data == "mod_confirm_reset":
-        try:
-            # Очищаем базы данных
-            async with pool.acquire() as conn:
-                await conn.execute('DELETE FROM bans')
-                await conn.execute('DELETE FROM reports')
-                await conn.execute("UPDATE users SET state = 'menu', partner_id = NULL")
-                await conn.execute("ALTER SEQUENCE reports_id_seq RESTART WITH 1")
-            
-            # Очищаем очередь поиска
-            searching_queue._users.clear()
-            
-            await callback.message.edit_text(
-                "✅ ВСЯ СТАТИСТИКА СБРОШЕНА!\n\n"
-                "• Все баны удалены 🗑️\n"
-                "• Все жалобы очищены 📝\n" 
-                "• Все пользователи сброшены 🔄\n"
-                "• Очередь поиска очищена 👥\n"
-                "• Счётчики обнулены 🔢",
-                reply_markup=get_mod_menu()
-            )
-            logging.info("Moderator reset ALL statistics")
-            
-        except Exception as e:
-            await callback.message.edit_text(
-                f"❌ Ошибка при сбросе: {e}",
-                reply_markup=get_mod_menu()
-            )
-            logging.error(f"Reset error: {e}")
 
     elif data == "mod_back":
         await callback.message.edit_text("🛠 МОДЕРАТОРСКАЯ ПАНЕЛЬ", reply_markup=get_mod_menu())

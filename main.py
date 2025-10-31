@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 from database import *
 load_dotenv()
 
-# --- Конфигурация ---
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 MODERATOR_ID = int(os.getenv("MODERATOR_ID", "0"))
 MOD_SECRET = os.getenv("MOD_SECRET", "")
@@ -25,11 +24,9 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 logging.basicConfig(level=logging.INFO)
 
-# --- Хеширование ID ---
 def hash_id(user_id):
     return hashlib.sha256(f"{user_id}{HASH_SALT}".encode()).hexdigest()[:16]
 
-# --- Очередь поиска ---
 class RandomMatchQueue:
     def __init__(self):
         self._users = set()
@@ -64,10 +61,6 @@ class RandomMatchQueue:
    
     def __len__(self):
         return len(self._users)
-   
-    async def get_queue_info(self):
-        async with self._lock:
-            return list(self._users)
 
 searching_queue = RandomMatchQueue()
 
@@ -98,12 +91,11 @@ def get_chat_menu():
         input_field_placeholder="Напиши сообщение..."
     )
 
+# УПРОЩЁННАЯ ПАНЕЛЬ МОДЕРАТОРА
 def get_mod_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Жалобы", callback_data="mod_reports")],
         [InlineKeyboardButton(text="Статистика", callback_data="mod_stats")],
-        [InlineKeyboardButton(text="Бан по ID", callback_data="mod_ban")],
-        [InlineKeyboardButton(text="Поиск пользователя", callback_data="mod_search_user")]
     ])
 
 # --- Проверка бана ---
@@ -206,7 +198,7 @@ async def start(message: types.Message):
         await update_user(user_id, state='menu')
         await message.answer(
             "ПАНЕЛЬ МОДЕРАТОРА\n\n"
-            "Используй /mod для доступа к панели модератора.",
+            "Используй /mod для доступа.",
             reply_markup=get_main_menu()
         )
         return
@@ -232,18 +224,22 @@ async def mod_panel(message: types.Message):
     await update_user(user_id, state='mod_menu')
     await message.answer(
         f"МОДЕРАТОРСКАЯ ПАНЕЛЬ\n"
-        f"Ваш ID: {MODERATOR_ID}",
+        f"Ваш ID: {MODERATOR_ID}\n\n"
+        f"Команды:\n"
+        f"/ban <ID> — забанить\n"
+        f"/unban <ID> — разбанить\n"
+        f"/user <ID> — профиль",
         reply_markup=get_mod_menu()
     )
 
-@dp.message(Command("бан", "ban"))
-async def ban_command(message: types.Message):
-    user_id = message.from_user.id
-    if user_id != MODERATOR_ID:
+# НОВЫЕ КОМАНДЫ ДЛЯ МОДЕРАТОРА
+@dp.message(Command("ban"))
+async def cmd_ban(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /бан <ID_пользователя>")
+        await message.answer("Использование: /ban <ID>")
         return
     try:
         target_id = int(args[1])
@@ -254,30 +250,55 @@ async def ban_command(message: types.Message):
         await message.answer(f"Пользователь {target_id} забанен навсегда.")
         await safe_send_message(target_id, "Вы были заблокированы модератором навсегда.")
     except ValueError:
-        await message.answer("Неверный формат ID.")
-    except Exception as e:
-        logging.error(f"Ban error: {e}")
-        await message.answer("Ошибка при бане пользователя.")
+        await message.answer("Неверный ID.")
 
-@dp.message(Command("анбан", "unban"))
-async def unban_command(message: types.Message):
-    user_id = message.from_user.id
-    if user_id != MODERATOR_ID:
+@dp.message(Command("unban"))
+async def cmd_unban(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /анбан <ID_пользователя>")
+        await message.answer("Использование: /unban <ID>")
         return
     try:
         target_id = int(args[1])
         await unban_user(target_id)
         await message.answer(f"Пользователь {target_id} разбанен.")
-        await safe_send_message(target_id, "Ваша блокировка снята модератором.")
+        await safe_send_message(target_id, "Вы разбанены.")
     except ValueError:
-        await message.answer("Неверный формат ID.")
-    except Exception as e:
-        logging.error(f"Unban error: {e}")
-        await message.answer("Ошибка при разбане пользователя.")
+        await message.answer("Неверный ID.")
+
+@dp.message(Command("user"))
+async def cmd_user(message: types.Message):
+    if message.from_user.id != MODERATOR_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Использование: /user <ID>")
+        return
+    try:
+        target_id = int(args[1])
+        reports = await get_user_reports(target_id)
+        count = await get_reports_count(target_id)
+        is_ban = await is_banned(target_id)
+
+        text = f"Пользователь: `{target_id}`\n\n"
+        text += f"Жалоб: {count}\n"
+        text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
+
+        if reports:
+            text += "Последние жалобы:\n"
+            for r in reports[:5]:
+                from_id = r['from_id']
+                reason = r['reason'] or "Без причины"
+                time_str = r['timestamp'].strftime('%d.%m %H:%M')
+                text += f"• от {from_id}: {reason} [{time_str}]\n"
+        else:
+            text += "Жалоб нет."
+
+        await message.answer(text, parse_mode="Markdown")
+    except ValueError:
+        await message.answer("Неверный ID.")
 
 @dp.message(lambda m: m.text == "Мой ID")
 async def my_id(message: types.Message):
@@ -336,70 +357,46 @@ async def cancel_anything(message: types.Message):
     await message.answer("Нечего отменять.", reply_markup=get_main_menu())
 
 # ================================
-# МОДЕРАТОРСКИЕ ДЕЙСТВИЯ (ПЕРЕМЕЩЕНЫ ВЫШЕ!)
+# ЧАТ
 # ================================
-@dp.message(lambda m: m.from_user.id == MODERATOR_ID)
-async def mod_actions(message: types.Message):
-    user = await get_user(message.from_user.id)
-    if not user:
+@dp.message(lambda m: m.text in ["Стоп", "Следующий", "Пожаловаться"])
+async def handle_chat_buttons(message: types.Message):
+    user_id = message.from_user.id
+    user = await get_user(user_id)
+    if not user or user['state'] != 'chat':
+        await message.answer("Сначала найди собеседника.")
+        return
+    if message.text == "Стоп":
+        partner_id = user['partner_id']
+        await update_user(user_id, partner_id=None, state='menu')
+        if partner_id:
+            await update_user(partner_id, partner_id=None, state='menu')
+            await safe_send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
+        await searching_queue.remove(user_id)
+        await message.answer("Чат завершён.", reply_markup=get_main_menu())
+        return
+    if message.text == "Следующий":
+        partner_id = user['partner_id']
+        if partner_id:
+            await update_user(partner_id, partner_id=None, state='menu')
+            await safe_send_message(partner_id, "Собеседник ищет нового партнёра.", reply_markup=get_main_menu())
+        await update_user(user_id, partner_id=None, state='searching')
+        await searching_queue.add(user_id)
+        await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
+        return
+    if message.text == "Пожаловаться":
+        if not user['partner_id']:
+            await message.answer("Нет активного чата для жалобы.")
+            return
+        await message.answer(
+            "Опиши причину жалобы:",
+            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True)
+        )
+        await update_user(user_id, state='reporting')
         return
 
-    # БАН ПО ID
-    if user['state'] == 'mod_banning':
-        try:
-            target_id = int(message.text.strip())
-            if target_id == MODERATOR_ID:
-                await message.answer("Нельзя забанить себя!", reply_markup=get_mod_menu())
-                await update_user(message.from_user.id, state='mod_menu')
-                return
-            await ban_user_permanent(target_id)
-            await message.answer(f"Пользователь {target_id} забанен навсегда.", reply_markup=get_mod_menu())
-            await update_user(message.from_user.id, state='mod_menu')
-            await safe_send_message(target_id, "Вы были заблокированы модератором навсегда.")
-        except ValueError:
-            await message.answer("Неверный формат ID.", reply_markup=get_mod_menu())
-            await update_user(message.from_user.id, state='mod_menu')
-        except Exception as e:
-            logging.error(f"Ban error: {e}")
-            await message.answer("Ошибка при бане.", reply_markup=get_mod_menu())
-        return  # Важно: предотвращаем дальнейшую обработку
-
-    # ПОИСК ПО ID
-    elif user['state'] == 'mod_searching_user':
-        try:
-            target_id = int(message.text.strip())
-            reports = await get_user_reports(target_id)
-            count = await get_reports_count(target_id)
-            is_ban = await is_banned(target_id)
-
-            text = f"Пользователь: `{target_id}`\n\n"
-            text += f"Жалоб: {count}\n"
-            text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
-
-            if reports:
-                text += "Последние жалобы:\n"
-                for r in reports[:5]:
-                    from_id = r['from_id']
-                    reason = r['reason'] or "Без причины"
-                    time_str = r['timestamp'].strftime('%d.%m %H:%M')
-                    text += f"• от {from_id}: {reason} [{time_str}]\n"
-            else:
-                text += "Жалоб нет."
-
-            kb = [
-                [InlineKeyboardButton(text="Бан", callback_data=f"mod_ban_confirm_{target_id}")],
-                [InlineKeyboardButton(text="Разбан", callback_data=f"mod_unban_confirm_{target_id}")],
-                [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
-            ]
-            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-            await update_user(message.from_user.id, state='mod_menu')
-        except ValueError:
-            await message.answer("Неверный ID.", reply_markup=get_mod_menu())
-            await update_user(message.from_user.id, state='mod_menu')
-        return  # Важно: предотвращаем дальнейшую обработку
-
 # ================================
-# ОБРАБОТКА СООБЩЕНИЙ (НИЖЕ mod_actions!)
+# ОБРАБОТКА СООБЩЕНИЙ (ВСЕ ПОЛЬЗОВАТЕЛИ)
 # ================================
 @dp.message()
 async def handle_messages(message: types.Message):
@@ -446,7 +443,7 @@ async def handle_messages(message: types.Message):
                 await safe_send_message(partner_id, "Вы были забанены навсегда за многочисленные жалобы.")
         return
 
-    # Пересылка
+    # Пересылка в чате
     if user['state'] == 'chat' and user['partner_id']:
         try:
             await safe_forward_media(user['partner_id'], message)
@@ -470,69 +467,46 @@ async def mod_callbacks(callback: types.CallbackQuery):
             if not reports:
                 await callback.message.edit_text("Жалоб нет.", reply_markup=get_mod_menu())
                 return
-            text = "ПОСЛЕДНИЕ ЖАЛОБЫ:\n\n"
+            text_lines = ["ПОСЛЕДНИЕ ЖАЛОБЫ:\n"]
             for r in reports[:15]:
-                from_id = r['from_id']
-                to_id = r['to_id']
-                reason = r['reason'] or "Без причины"
-                time_str = r['timestamp'].strftime('%d.%m %H:%M')
-                text += f"{from_id} → {to_id}\n"
-                text += f"{reason}\n"
-                text += f"{time_str}\n\n"
-            kb = [
+                text_lines.append(f"{r['from_id']} → {r['to_id']}")
+                text_lines.append(f"{r['reason'] or 'Без причины'}")
+                text_lines.append(f"{r['timestamp'].strftime('%d.%m %H:%M')}\n")
+            new_text = "\n".join(text_lines)
+            new_markup = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Обновить", callback_data="mod_reports")],
                 [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
-            ]
-            await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+            ])
+
+            # Проверка на изменения
+            if (callback.message.text or "") == new_text and callback.message.reply_markup == new_markup:
+                await callback.answer("Список не изменился.", show_alert=False)
+                return
+
+            await callback.message.edit_text(new_text, reply_markup=new_markup)
+            await callback.answer()
         except Exception as e:
-            logging.error(f"Error loading reports: {e}")
-            await callback.message.edit_text("Ошибка загрузки жалоб.", reply_markup=get_mod_menu())
+            if "not modified" in str(e):
+                await callback.answer("Список не изменился.", show_alert=False)
+            else:
+                logging.error(f"Error: {e}")
+                await callback.answer("Ошибка.", show_alert=True)
 
     elif data == "mod_stats":
         total_users, active_chats, total_reports = await get_stats()
         in_queue = len(searching_queue)
         reports_today = await get_reports_today()
         text = (
-            f"СТАТИСТИКА СИСТЕМЫ\n\n"
-            f"Всего пользователей: {total_users}\n"
-            f"Активных чатов: {active_chats}\n"
+            f"СТАТИСТИКА\n\n"
+            f"Пользователей: {total_users}\n"
+            f"Чатов: {active_chats}\n"
             f"В поиске: {in_queue}\n"
-            f"Всего жалоб: {total_reports}\n"
-            f"Жалоб сегодня: {reports_today}\n"
+            f"Жалоб всего: {total_reports}\n"
+            f"Сегодня: {reports_today}"
         )
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
         ]))
-
-    elif data == "mod_ban":
-        await callback.message.edit_text(
-            "Введите ID пользователя для бана:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Отмена", callback_data="mod_back")]
-            ])
-        )
-        await update_user(callback.from_user.id, state='mod_banning')
-
-    elif data == "mod_search_user":
-        await callback.message.edit_text(
-            "Введите ID пользователя:",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Отмена", callback_data="mod_back")]
-            ])
-        )
-        await update_user(callback.from_user.id, state='mod_searching_user')
-
-    elif data.startswith("mod_ban_confirm_"):
-        target_id = int(data.split("_")[3])
-        await ban_user_permanent(target_id)
-        await callback.message.edit_text(f"Пользователь {target_id} забанен.", reply_markup=get_mod_menu())
-        await safe_send_message(target_id, "Вы забанены модератором навсегда.")
-
-    elif data.startswith("mod_unban_confirm_"):
-        target_id = int(data.split("_")[3])
-        await unban_user(target_id)
-        await callback.message.edit_text(f"Пользователь {target_id} разбанен.", reply_markup=get_mod_menu())
-        await safe_send_message(target_id, "Вы разбанены.")
 
     elif data == "mod_back":
         await callback.message.edit_text("МОДЕРАТОРСКАЯ ПАНЕЛЬ", reply_markup=get_mod_menu())
@@ -550,10 +524,10 @@ async def on_startup(app):
     await bot.set_webhook(webhook_url)
     logging.info(f"Webhook set to: {webhook_url}")
     asyncio.create_task(start_search_loop())
-    logging.info("Bot started successfully!")
+    logging.info("Bot started!")
 
 async def on_shutdown(app):
-    logging.info("Shutting down bot...")
+    logging.info("Shutting down...")
     await bot.session.close()
 
 def main():

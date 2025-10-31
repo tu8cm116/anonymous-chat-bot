@@ -375,7 +375,70 @@ async def handle_chat_buttons(message: types.Message):
         return
 
 # ================================
-# ЖАЛОБЫ
+# МОДЕРАТОРСКИЕ ДЕЙСТВИЯ (ВЫШЕ handle_messages!)
+# ================================
+@dp.message(lambda m: m.from_user.id == MODERATOR_ID)
+async def mod_actions(message: types.Message):
+    user = await get_user(message.from_user.id)
+    if not user:
+        return
+
+    # БАН ПО ID
+    if user['state'] == 'mod_banning':
+        try:
+            target_id = int(message.text.strip())
+            if target_id == MODERATOR_ID:
+                await message.answer("Нельзя забанить себя!", reply_markup=get_mod_menu())
+                await update_user(message.from_user.id, state='mod_menu')
+                return
+            await ban_user_permanent(target_id)
+            await message.answer(f"Пользователь {target_id} забанен навсегда.", reply_markup=get_mod_menu())
+            await update_user(message.from_user.id, state='mod_menu')
+            await safe_send_message(target_id, "Вы были заблокированы модератором навсегда.")
+        except ValueError:
+            await message.answer("Неверный формат ID.", reply_markup=get_mod_menu())
+            await update_user(message.from_user.id, state='mod_menu')
+        except Exception as e:
+            logging.error(f"Ban error: {e}")
+            await message.answer("Ошибка при бане.", reply_markup=get_mod_menu())
+        return  # ← ВАЖНО: не дать попасть в handle_messages
+
+    # ПОИСК ПО ID
+    elif user['state'] == 'mod_searching_user':
+        try:
+            target_id = int(message.text.strip())
+            reports = await get_user_reports(target_id)
+            count = await get_reports_count(target_id)
+            is_ban = await is_banned(target_id)
+
+            text = f"Пользователь: `{target_id}`\n\n"
+            text += f"Жалоб: {count}\n"
+            text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
+
+            if reports:
+                text += "Последние жалобы:\n"
+                for r in reports[:5]:
+                    from_id = r['from_id']
+                    reason = r['reason'] or "Без причины"
+                    time_str = r['timestamp'].strftime('%d.%m %H:%M')
+                    text += f"• от {from_id}: {reason} [{time_str}]\n"
+            else:
+                text += "Жалоб нет."
+
+            kb = [
+                [InlineKeyboardButton(text="Бан", callback_data=f"mod_ban_confirm_{target_id}")],
+                [InlineKeyboardButton(text="Разбан", callback_data=f"mod_unban_confirm_{target_id}")],
+                [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
+            ]
+            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
+            await update_user(message.from_user.id, state='mod_menu')
+        except ValueError:
+            await message.answer("Неверный ID.", reply_markup=get_mod_menu())
+            await update_user(message.from_user.id, state='mod_menu')
+        return  # ← ВАЖНО
+
+# ================================
+# ОБРАБОТКА СООБЩЕНИЙ (НИЖЕ mod_actions!)
 # ================================
 @dp.message()
 async def handle_messages(message: types.Message):
@@ -514,62 +577,6 @@ async def mod_callbacks(callback: types.CallbackQuery):
         await callback.message.edit_text("МОДЕРАТОРСКАЯ ПАНЕЛЬ", reply_markup=get_mod_menu())
 
     await callback.answer()
-
-# --- Бан/поиск ---
-@dp.message(lambda m: m.from_user.id == MODERATOR_ID)
-async def mod_actions(message: types.Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        return
-
-    if user['state'] == 'mod_banning':
-        try:
-            target_id = int(message.text.strip())
-            if target_id == MODERATOR_ID:
-                await message.answer("Нельзя забанить себя!", reply_markup=get_mod_menu())
-                await update_user(message.from_user.id, state='mod_menu')
-                return
-            await ban_user_permanent(target_id)
-            await message.answer(f"Пользователь {target_id} забанен навсегда.", reply_markup=get_mod_menu())
-            await update_user(message.from_user.id, state='mod_menu')
-            await safe_send_message(target_id, "Вы были заблокированы модератором навсегда.")
-        except ValueError:
-            await message.answer("Неверный формат ID.", reply_markup=get_mod_menu())
-        except Exception as e:
-            logging.error(f"Ban error: {e}")
-            await message.answer("Ошибка при бане.", reply_markup=get_mod_menu())
-
-    elif user['state'] == 'mod_searching_user':
-        try:
-            target_id = int(message.text.strip())
-            reports = await get_user_reports(target_id)
-            count = await get_reports_count(target_id)
-            is_ban = await is_banned(target_id)
-
-            text = f"Пользователь: `{target_id}`\n\n"
-            text += f"Жалоб: {count}\n"
-            text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
-
-            if reports:
-                text += "Последние жалобы:\n"
-                for r in reports[:5]:
-                    from_id = r['from_id']
-                    reason = r['reason'] or "Без причины"
-                    time_str = r['timestamp'].strftime('%d.%m %H:%M')
-                    text += f"• от {from_id}: {reason} [{time_str}]\n"
-            else:
-                text += "Жалоб нет."
-
-            kb = [
-                [InlineKeyboardButton(text="Бан", callback_data=f"mod_ban_confirm_{target_id}")],
-                [InlineKeyboardButton(text="Разбан", callback_data=f"mod_unban_confirm_{target_id}")],
-                [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
-            ]
-            await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb), parse_mode="Markdown")
-            await update_user(message.from_user.id, state='mod_menu')
-        except ValueError:
-            await message.answer("Неверный ID.", reply_markup=get_mod_menu())
-            await update_user(message.from_user.id, state='mod_menu')
 
 # ================================
 # ЗАПУСК

@@ -18,6 +18,7 @@ async def init_db():
                     state TEXT DEFAULT 'menu',
                     partner_id BIGINT,
                     chat_start TIMESTAMP,
+                    last_search_msg_id BIGINT,
                     last_active TIMESTAMP DEFAULT NOW(),
                     created_at TIMESTAMP DEFAULT NOW()
                 );
@@ -43,7 +44,7 @@ async def init_db():
                 );
             ''')
 
-            # chat_logs — НОВАЯ ТАБЛИЦА
+            # chat_logs
             await conn.execute('''
                 CREATE TABLE IF NOT EXISTS chat_logs (
                     id SERIAL PRIMARY KEY,
@@ -57,6 +58,7 @@ async def init_db():
             # МИГРАЦИИ
             await conn.execute('ALTER TABLE reports ADD COLUMN IF NOT EXISTS reason TEXT;')
             await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS chat_start TIMESTAMP;')
+            await conn.execute('ALTER TABLE users ADD COLUMN IF NOT EXISTS last_search_msg_id BIGINT;')
 
         logging.info("Database initialized successfully")
     except Exception as e:

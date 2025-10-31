@@ -2,6 +2,7 @@ import asyncio
 import logging
 import hashlib
 import random
+from datetime import datetime
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
 from aiogram.types import ReplyKeyboardMarkup, KeyboardButton, InlineKeyboardMarkup, InlineKeyboardButton
@@ -31,7 +32,7 @@ class RandomMatchQueue:
     def __init__(self):
         self._users = set()
         self._lock = asyncio.Lock()
-   
+  
     async def add(self, user_id):
         async with self._lock:
             if user_id not in self._users:
@@ -39,7 +40,7 @@ class RandomMatchQueue:
                 logging.info(f"User {user_id} added to queue. Queue size: {len(self._users)}")
                 return True
         return False
-   
+  
     async def remove(self, user_id):
         async with self._lock:
             if user_id in self._users:
@@ -47,7 +48,7 @@ class RandomMatchQueue:
                 logging.info(f"User {user_id} removed from queue. Queue size: {len(self._users)}")
                 return True
         return False
-   
+  
     async def get_random_pair(self):
         async with self._lock:
             if len(self._users) < 2:
@@ -58,7 +59,7 @@ class RandomMatchQueue:
             self._users.remove(user2)
             logging.info(f"Random pair created: {user1} and {user2}. Queue size: {len(self._users)}")
             return user1, user2
-   
+  
     def __len__(self):
         return len(self._users)
 
@@ -69,7 +70,8 @@ def get_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
             [KeyboardButton(text="Найти собеседника")],
-            [KeyboardButton(text="Правила"), KeyboardButton(text="Мой ID")]
+            [KeyboardButton(text="Статистика"), KeyboardButton(text="Мой ID")],
+            [KeyboardButton(text="Правила")]
         ],
         resize_keyboard=True,
         input_field_placeholder="Выбери действие..."
@@ -91,7 +93,6 @@ def get_chat_menu():
         input_field_placeholder="Напиши сообщение..."
     )
 
-# УПРОЩЁННАЯ ПАНЕЛЬ МОДЕРАТОРА
 def get_mod_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Жалобы", callback_data="mod_reports")],
@@ -159,8 +160,9 @@ async def start_search_loop():
                     if not u1_data or not u2_data:
                         continue
                     if u1_data['state'] == 'searching' and u2_data['state'] == 'searching':
-                        await update_user(user1, partner_id=user2, state='chat')
-                        await update_user(user2, partner_id=user1, state='chat')
+                        now = datetime.now()
+                        await update_user(user1, partner_id=user2, state='chat', chat_start=now)
+                        await update_user(user2, partner_id=user1, state='chat', chat_start=now)
                         await safe_send_message(user1,
                             "Случайный собеседник найден! Начинайте общение.\n\n"
                             "Теперь можно отправлять:\n"
@@ -232,7 +234,6 @@ async def mod_panel(message: types.Message):
         reply_markup=get_mod_menu()
     )
 
-# НОВЫЕ КОМАНДЫ ДЛЯ МОДЕРАТОРА
 @dp.message(Command("ban"))
 async def cmd_ban(message: types.Message):
     if message.from_user.id != MODERATOR_ID:
@@ -281,11 +282,9 @@ async def cmd_user(message: types.Message):
         reports = await get_user_reports(target_id)
         count = await get_reports_count(target_id)
         is_ban = await is_banned(target_id)
-
         text = f"Пользователь: `{target_id}`\n\n"
         text += f"Жалоб: {count}\n"
         text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
-
         if reports:
             text += "Последние жалобы:\n"
             for r in reports[:5]:
@@ -295,10 +294,28 @@ async def cmd_user(message: types.Message):
                 text += f"• от {from_id}: {reason} [{time_str}]\n"
         else:
             text += "Жалоб нет."
-
         await message.answer(text, parse_mode="Markdown")
     except ValueError:
         await message.answer("Неверный ID.")
+
+@dp.message(Command("stats"))
+async def user_stats(message: types.Message):
+    user_id = message.from_user.id
+    total_chats, total_seconds = await get_user_chat_stats(user_id)
+
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+
+    text = (
+        f"ТВОЯ СТАТИСТИКА\n\n"
+        f"Чатов: {total_chats}\n"
+        f"Общее время: {hours}ч {minutes}м\n"
+    )
+    await message.answer(text)
+
+@dp.message(lambda m: m.text == "Статистика")
+async def stats_button(message: types.Message):
+    await user_stats(message)
 
 @dp.message(lambda m: m.text == "Мой ID")
 async def my_id(message: types.Message):
@@ -366,26 +383,38 @@ async def handle_chat_buttons(message: types.Message):
     if not user or user['state'] != 'chat':
         await message.answer("Сначала найди собеседника.")
         return
+
+    partner_id = user['partner_id']
+    chat_start = user.get('chat_start')
+
     if message.text == "Стоп":
-        partner_id = user['partner_id']
-        await update_user(user_id, partner_id=None, state='menu')
+        if chat_start and partner_id:
+            duration = datetime.now() - chat_start
+            await log_chat_end(user_id, partner_id, duration)
+
+        await update_user(user_id, partner_id=None, state='menu', chat_start=None)
         if partner_id:
-            await update_user(partner_id, partner_id=None, state='menu')
+            await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
             await safe_send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
         await searching_queue.remove(user_id)
         await message.answer("Чат завершён.", reply_markup=get_main_menu())
         return
+
     if message.text == "Следующий":
-        partner_id = user['partner_id']
+        if chat_start and partner_id:
+            duration = datetime.now() - chat_start
+            await log_chat_end(user_id, partner_id, duration)
+
         if partner_id:
-            await update_user(partner_id, partner_id=None, state='menu')
+            await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
             await safe_send_message(partner_id, "Собеседник ищет нового партнёра.", reply_markup=get_main_menu())
-        await update_user(user_id, partner_id=None, state='searching')
+        await update_user(user_id, partner_id=None, state='searching', chat_start=None)
         await searching_queue.add(user_id)
         await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
         return
+
     if message.text == "Пожаловаться":
-        if not user['partner_id']:
+        if not partner_id:
             await message.answer("Нет активного чата для жалобы.")
             return
         await message.answer(
@@ -396,7 +425,7 @@ async def handle_chat_buttons(message: types.Message):
         return
 
 # ================================
-# ОБРАБОТКА СООБЩЕНИЙ (ВСЕ ПОЛЬЗОВАТЕЛИ)
+# ОБРАБОТКА СООБЩЕНИЙ
 # ================================
 @dp.message()
 async def handle_messages(message: types.Message):
@@ -406,7 +435,6 @@ async def handle_messages(message: types.Message):
         await update_user(user_id, state='menu')
         return
 
-    # Жалоба
     if user['state'] == 'reporting':
         reason = message.text.strip()
         if not reason or len(reason) < 5:
@@ -443,7 +471,6 @@ async def handle_messages(message: types.Message):
                 await safe_send_message(partner_id, "Вы были забанены навсегда за многочисленные жалобы.")
         return
 
-    # Пересылка в чате
     if user['state'] == 'chat' and user['partner_id']:
         try:
             await safe_forward_media(user['partner_id'], message)
@@ -477,12 +504,9 @@ async def mod_callbacks(callback: types.CallbackQuery):
                 [InlineKeyboardButton(text="Обновить", callback_data="mod_reports")],
                 [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
             ])
-
-            # Проверка на изменения
-            if (callback.message.text or "") == new_text and callback.message.reply_markup == new_markup:
+            if (callback.message.text or "") == new_text:
                 await callback.answer("Список не изменился.", show_alert=False)
                 return
-
             await callback.message.edit_text(new_text, reply_markup=new_markup)
             await callback.answer()
         except Exception as e:

@@ -11,7 +11,6 @@ from aiohttp import web
 import os
 from dotenv import load_dotenv
 from database import *
-
 load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -65,40 +64,39 @@ class RandomMatchQueue:
         return len(self._users)
 
 searching_queue = RandomMatchQueue()
-recent_partners = set()  # Пары, которые нельзя соединять в этом цикле
 
 # --- Клавиатуры ---
 def get_main_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Найти собеседника")],
-            [KeyboardButton(text="Статистика"), KeyboardButton(text="Мой ID")],
-            [KeyboardButton(text="Правила")]
+            [KeyboardButton(text="🔍 Найти собеседника")],
+            [KeyboardButton(text="📊 Статистика"), KeyboardButton(text="🆔 Мой ID")],
+            [KeyboardButton(text="📜 Правила")]
         ],
         resize_keyboard=True,
-        input_field_placeholder="Выбери действие..."
+        input_field_placeholder="Выберите действие..."
     )
 
 def get_searching_menu():
     return ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text="Отмена")]],
+        keyboard=[[KeyboardButton(text="❌ Отмена поиска")]],
         resize_keyboard=True
     )
 
 def get_chat_menu():
     return ReplyKeyboardMarkup(
         keyboard=[
-            [KeyboardButton(text="Стоп"), KeyboardButton(text="Следующий")],
-            [KeyboardButton(text="Пожаловаться")]
+            [KeyboardButton(text="⏹️ Завершить"), KeyboardButton(text="➡️ Следующий")],
+            [KeyboardButton(text="🚫 Пожаловаться")]
         ],
         resize_keyboard=True,
-        input_field_placeholder="Напиши сообщение..."
+        input_field_placeholder="Напишите сообщение..."
     )
 
 def get_mod_menu():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Жалобы", callback_data="mod_reports")],
-        [InlineKeyboardButton(text="Статистика", callback_data="mod_stats")],
+        [InlineKeyboardButton(text="📨 Жалобы", callback_data="mod_reports")],
+        [InlineKeyboardButton(text="📈 Статистика", callback_data="mod_stats")],
     ])
 
 # --- Проверка бана ---
@@ -106,18 +104,18 @@ async def check_ban(user_id):
     if user_id == MODERATOR_ID:
         return False
     if await is_banned(user_id):
-        await bot.send_message(user_id, "Ты забанен. Обратись к модератору для разблокировки.")
+        await bot.send_message(user_id, "❌ Вы заблокированы в системе.\n\nОбратитесь к модератору для разблокировки.")
         return True
     return False
 
 # --- Безопасная отправка ---
 async def safe_send_message(chat_id, text, reply_markup=None):
     try:
-        msg = await bot.send_message(chat_id, text, reply_markup=reply_markup)
-        return msg
+        await bot.send_message(chat_id, text, reply_markup=reply_markup)
+        return True
     except Exception as e:
         logging.error(f"Failed to send message to {chat_id}: {e}")
-        return None
+        return False
 
 # --- Пересылка медиа ---
 async def safe_forward_media(chat_id, message):
@@ -156,13 +154,6 @@ async def start_search_loop():
         while True:
             user1, user2 = await searching_queue.get_random_pair()
             if user1 and user2:
-                pair = tuple(sorted([user1, user2]))
-                if pair in recent_partners:
-                    await searching_queue.add(user1)
-                    await searching_queue.add(user2)
-                    await asyncio.sleep(0.1)
-                    continue
-
                 try:
                     u1_data = await get_user(user1)
                     u2_data = await get_user(user2)
@@ -172,35 +163,20 @@ async def start_search_loop():
                         now = datetime.now()
                         await update_user(user1, partner_id=user2, state='chat', chat_start=now)
                         await update_user(user2, partner_id=user1, state='chat', chat_start=now)
-
-                        recent_partners.discard(pair)
-
-                        # Удаляем "Ищем..."
-                        try:
-                            if u1_data.get('last_search_msg_id'):
-                                await bot.delete_message(user1, u1_data['last_search_msg_id'])
-                        except:
-                            pass
-                        try:
-                            if u2_data.get('last_search_msg_id'):
-                                await bot.delete_message(user2, u2_data['last_search_msg_id'])
-                        except:
-                            pass
-
-                        # Отправляем новое
-                        msg1 = await safe_send_message(user1,
-                            "Случайный собеседник найден! Начинайте общение.\n\n"
-                            "Теперь можно отправлять:\n"
-                            "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
+                        await safe_send_message(user1,
+                            "🎉 Собеседник найден! Начинайте общение!\n\n"
+                            "💬 Теперь вы можете обмениваться:\n"
+                            "• Текстовыми сообщениями\n• Фотографиями\n• Видео\n• Голосовыми сообщениями\n"
+                            "• Музыкой\n• Стикерами\n• Файлами\n• И многим другим!",
                             reply_markup=get_chat_menu()
                         )
-                        msg2 = await safe_send_message(user2,
-                            "Случайный собеседник найден! Начинайте общение.\n\n"
-                            "Теперь можно отправлять:\n"
-                            "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
+                        await safe_send_message(user2,
+                            "🎉 Собеседник найден! Начинайте общение!\n\n"
+                            "💬 Теперь вы можете обмениваться:\n"
+                            "• Текстовыми сообщениями\n• Фотографиями\n• Видео\n• Голосовыми сообщениями\n"
+                            "• Музыкой\n• Стикерами\n• Файлами\n• И многим другим!",
                             reply_markup=get_chat_menu()
                         )
-
                     else:
                         if u1_data['state'] == 'searching':
                             await searching_queue.add(user1)
@@ -210,9 +186,6 @@ async def start_search_loop():
                     logging.error(f"Error pairing users: {e}")
                     await searching_queue.add(user1)
                     await searching_queue.add(user2)
-            else:
-                if len(recent_partners) > 1000:
-                    recent_partners.clear()
             await asyncio.sleep(0.5)
     except asyncio.CancelledError:
         logging.info("Search loop stopped")
@@ -228,8 +201,8 @@ async def start(message: types.Message):
     if user_id == MODERATOR_ID:
         await update_user(user_id, state='menu')
         await message.answer(
-            "ПАНЕЛЬ МОДЕРАТОРА\n\n"
-            "Используй /mod для доступа.",
+            "🛡️ ПАНЕЛЬ МОДЕРАТОРА\n\n"
+            "Используйте /mod для доступа к функциям.",
             reply_markup=get_main_menu()
         )
         return
@@ -237,9 +210,10 @@ async def start(message: types.Message):
         return
     await update_user(user_id, state='menu')
     await message.answer(
-        "Привет! Добро пожаловать в анонимный чат!\n\n"
-        "Теперь можно отправлять:\n"
-        "• Текст\n• Фото\n• Видео\n• Голосовые\n• Музыку\n• Стикеры\n• Файлы\n• И многое другое!",
+        "👋 Привет! Добро пожаловать в анонимный чат!\n\n"
+        "💬 Здесь вы можете:\n"
+        "• Найти случайного собеседника\n• Общаться анонимно\n• Обмениваться разными типами сообщений\n\n"
+        "🎯 Выберите действие в меню ниже:",
         reply_markup=get_main_menu()
     )
 
@@ -250,16 +224,16 @@ async def mod_panel(message: types.Message):
         return
     args = message.text.split()
     if len(args) < 2 or args[1] != MOD_SECRET:
-        await message.answer("Неверный ключ доступа.")
+        await message.answer("❌ Неверный ключ доступа.")
         return
     await update_user(user_id, state='mod_menu')
     await message.answer(
-        f"МОДЕРАТОРСКАЯ ПАНЕЛЬ\n"
+        f"🛡️ ПАНЕЛЬ МОДЕРАТОРА\n"
         f"Ваш ID: {MODERATOR_ID}\n\n"
-        f"Команды:\n"
-        f"/ban <ID> — забанить\n"
-        f"/unban <ID> — разбанить\n"
-        f"/user <ID> — профиль",
+        f"⚙️ Доступные команды:\n"
+        f"/ban <ID> — заблокировать пользователя\n"
+        f"/unban <ID> — разблокировать пользователя\n"
+        f"/user <ID> — информация о пользователе",
         reply_markup=get_mod_menu()
     )
 
@@ -269,18 +243,18 @@ async def cmd_ban(message: types.Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /ban <ID>")
+        await message.answer("📝 Использование: /ban <ID пользователя>")
         return
     try:
         target_id = int(args[1])
         if target_id == MODERATOR_ID:
-            await message.answer("Нельзя забанить себя!")
+            await message.answer("❌ Нельзя заблокировать себя!")
             return
         await ban_user_permanent(target_id)
-        await message.answer(f"Пользователь {target_id} забанен навсегда.")
-        await safe_send_message(target_id, "Вы были заблокированы модератором навсегда.")
+        await message.answer(f"✅ Пользователь {target_id} заблокирован.")
+        await safe_send_message(target_id, "❌ Вы были заблокированы модератором.")
     except ValueError:
-        await message.answer("Неверный ID.")
+        await message.answer("❌ Неверный формат ID.")
 
 @dp.message(Command("unban"))
 async def cmd_unban(message: types.Message):
@@ -288,15 +262,15 @@ async def cmd_unban(message: types.Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /unban <ID>")
+        await message.answer("📝 Использование: /unban <ID пользователя>")
         return
     try:
         target_id = int(args[1])
         await unban_user(target_id)
-        await message.answer(f"Пользователь {target_id} разбанен.")
-        await safe_send_message(target_id, "Вы разбанены.")
+        await message.answer(f"✅ Пользователь {target_id} разблокирован.")
+        await safe_send_message(target_id, "✅ Ваша блокировка снята.")
     except ValueError:
-        await message.answer("Неверный ID.")
+        await message.answer("❌ Неверный формат ID.")
 
 @dp.message(Command("user"))
 async def cmd_user(message: types.Message):
@@ -304,91 +278,92 @@ async def cmd_user(message: types.Message):
         return
     args = message.text.split()
     if len(args) < 2:
-        await message.answer("Использование: /user <ID>")
+        await message.answer("📝 Использование: /user <ID пользователя>")
         return
     try:
         target_id = int(args[1])
         reports = await get_user_reports(target_id)
         count = await get_reports_count(target_id)
         is_ban = await is_banned(target_id)
-        text = f"Пользователь: `{target_id}`\n\n"
-        text += f"Жалоб: {count}\n"
-        text += f"Забанен: {'Да' if is_ban else 'Нет'}\n\n"
+        text = f"👤 Пользователь: `{target_id}`\n\n"
+        text += f"📨 Жалоб: {count}\n"
+        text += f"🚫 Статус: {'Заблокирован' if is_ban else 'Активен'}\n\n"
         if reports:
-            text += "Последние жалобы:\n"
+            text += "📋 Последние жалобы:\n"
             for r in reports[:5]:
                 from_id = r['from_id']
-                reason = r['reason'] or "Без причины"
+                reason = r['reason'] or "Причина не указана"
                 time_str = r['timestamp'].strftime('%d.%m %H:%M')
-                text += f"• от {from_id}: {reason} [{time_str}]\n"
+                text += f"• От {from_id}: {reason} [{time_str}]\n"
         else:
-            text += "Жалоб нет."
+            text += "✅ Жалоб нет."
         await message.answer(text, parse_mode="Markdown")
     except ValueError:
-        await message.answer("Неверный ID.")
+        await message.answer("❌ Неверный формат ID.")
 
 @dp.message(Command("stats"))
 async def user_stats(message: types.Message):
     user_id = message.from_user.id
     total_chats, total_seconds = await get_user_chat_stats(user_id)
+
     hours = total_seconds // 3600
     minutes = (total_seconds % 3600) // 60
+
     time_str = f"{hours}ч {minutes}м" if hours > 0 else f"{minutes}м"
+
     text = (
-        f"ТВОЯ СТАТИСТИКА\n\n"
-        f"Чатов: {total_chats}\n"
-        f"Общее время: {time_str}\n"
+        f"📊 ВАША СТАТИСТИКА\n\n"
+        f"💬 Количество чатов: {total_chats}\n"
+        f"⏱️ Общее время: {time_str}\n"
+        f"🎯 Рейтинг активности: {'🔥' * min(total_chats, 5)}"
     )
     await message.answer(text)
 
-@dp.message(lambda m: m.text == "Статистика")
+@dp.message(lambda m: m.text == "📊 Статистика")
 async def stats_button(message: types.Message):
     await user_stats(message)
 
-@dp.message(lambda m: m.text == "Мой ID")
+@dp.message(lambda m: m.text == "🆔 Мой ID")
 async def my_id(message: types.Message):
-    await message.answer(f"Ваш ID: `{message.from_user.id}`", parse_mode="Markdown")
+    await message.answer(f"🆔 Ваш идентификатор:\n\n`{message.from_user.id}`", parse_mode="Markdown")
 
-@dp.message(lambda m: m.text == "Правила")
+@dp.message(lambda m: m.text == "📜 Правила")
 async def rules(message: types.Message):
     await message.answer(
-        "Правила чата:\n\n"
-        "1. Запрещён нецензурный язык\n"
-        "2. Запрещён спам и флуд\n"
-        "3. Запрещена реклама\n"
-        "4. Запрещены оскорбления\n"
-        "5. Уважайте собеседника\n\n"
-        "Можно отправлять: текст, фото, видео, голосовые, музыку, стикеры, файлы",
-        reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Назад")]], resize_keyboard=True)
+        "📜 Правила анонимного чата:\n\n"
+        "🔹 1. Запрещён нецензурный язык\n"
+        "🔹 2. Запрещён спам и флуд\n"
+        "🔹 3. Запрещена реклама\n"
+        "🔹 4. Запрещены оскорбления\n"
+        "🔹 5. Уважайте собеседника\n\n"
+        "💬 Разрешённые форматы:\n"
+        "• Текст • Фото • Видео\n• Голосовые • Музыка\n• Стикеры • Файлы",
+        reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="🔙 Назад")]], resize_keyboard=True)
     )
 
-@dp.message(lambda m: m.text == "Назад")
+@dp.message(lambda m: m.text == "🔙 Назад")
 async def back_to_menu(message: types.Message):
     user_id = message.from_user.id
     await update_user(user_id, state='menu')
-    await message.answer("Главное меню:", reply_markup=get_main_menu())
+    await message.answer("🔙 Возврат в главное меню:", reply_markup=get_main_menu())
 
-@dp.message(lambda m: m.text == "Найти собеседника")
+@dp.message(lambda m: m.text == "🔍 Найти собеседника")
 async def search(message: types.Message):
     user_id = message.from_user.id
     if await check_ban(user_id):
         return
     user_data = await get_user(user_id)
     if user_data and user_data['state'] == 'chat':
-        await message.answer("Ты уже в чате! Заверши текущий разговор сначала.")
+        await message.answer("💬 Вы уже в чате! Завершите текущий диалог сначала.")
         return
-
     await update_user(user_id, state='searching')
     added = await searching_queue.add(user_id)
     if added:
-        await message.delete()
-        msg = await safe_send_message(user_id, "Ищем случайного собеседника...", reply_markup=get_searching_menu())
-        if msg:
-            await update_user(user_id, last_search_msg_id=msg.message_id)
+        await message.answer("🔍 Ищем собеседника...\n\n⏳ Пожалуйста, подождите", reply_markup=get_searching_menu())
     else:
-        await message.answer("Ты уже в очереди поиска!")
+        await message.answer("⏳ Вы уже в очереди поиска!")
 
-@dp.message(lambda m: m.text == "Отмена")
+@dp.message(lambda m: m.text == "❌ Отмена поиска")
 async def cancel_anything(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
@@ -396,92 +371,71 @@ async def cancel_anything(message: types.Message):
         return
     if user['state'] == 'reporting':
         await update_user(user_id, state='chat')
-        await message.answer("Жалоба отменена.", reply_markup=get_chat_menu())
+        await message.answer("❌ Жалоба отменена.", reply_markup=get_chat_menu())
         return
     if user['state'] == 'searching':
         await searching_queue.remove(user_id)
-        await update_user(user_id, state='menu', last_search_msg_id=None)
-        # Удаляем "Ищем..."
-        try:
-            if user.get('last_search_msg_id'):
-                await bot.delete_message(user_id, user['last_search_msg_id'])
-        except:
-            pass
-        await message.answer("Поиск отменён.", reply_markup=get_main_menu())
+        await update_user(user_id, state='menu')
+        await message.answer("❌ Поиск отменён.", reply_markup=get_main_menu())
         return
-    await message.answer("Нечего отменять.", reply_markup=get_main_menu())
+    await message.answer("❌ Нечего отменять.", reply_markup=get_main_menu())
 
 # ================================
 # ЧАТ
 # ================================
-@dp.message(lambda m: m.text in ["Стоп", "Следующий", "Пожаловаться"])
+@dp.message(lambda m: m.text in ["⏹️ Завершить", "➡️ Следующий", "🚫 Пожаловаться"])
 async def handle_chat_buttons(message: types.Message):
     user_id = message.from_user.id
     user = await get_user(user_id)
     if not user or user['state'] != 'chat':
-        await message.answer("Сначала найди собеседника.")
+        await message.answer("🔍 Сначала найдите собеседника.")
         return
 
     partner_id = user['partner_id']
     chat_start = user.get('chat_start')
     duration_text = ""
 
-    if chat_start and partner_id:
+    if chat_start:
         duration = datetime.now() - chat_start
         total_seconds = int(duration.total_seconds())
         minutes = total_seconds // 60
         seconds = total_seconds % 60
         duration_text = f"{minutes}м {seconds}с"
+
+        # Логируем в БД
         await log_chat_end(user_id, partner_id, duration)
 
-    if message.text == "Стоп":
+    if message.text == "⏹️ Завершить":
         await update_user(user_id, partner_id=None, state='menu', chat_start=None)
-        text_user = "Чат завершён."
-        if duration_text:
-            text_user += f"\nВремя: {duration_text}"
-
         if partner_id:
             await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
-            text_partner = "Собеседник завершил чат."
-            if duration_text:
-                text_partner += f"\nВремя: {duration_text}"
-            await safe_send_message(partner_id, text_partner, reply_markup=get_main_menu())
-
+            await safe_send_message(partner_id, "💬 Собеседник завершил диалог.", reply_markup=get_main_menu())
         await searching_queue.remove(user_id)
-        await message.answer(text_user, reply_markup=get_main_menu())
+        text = "💬 Диалог завершён."
+        if duration_text:
+            text += f"\n⏱️ Время общения: {duration_text}"
+        await message.answer(text, reply_markup=get_main_menu())
         return
 
-    if message.text == "Следующий":
+    if message.text == "➡️ Следующий":
         if partner_id:
-            pair = tuple(sorted([user_id, partner_id]))
-            recent_partners.add(pair)
-
-        text_initiator = "Ищем нового собеседника..."
-        if duration_text:
-            text_initiator += f"\nБыло: {duration_text}"
-
-        text_partner = "Собеседник ищет нового партнёра.\nНачинаем поиск..."
-        if duration_text:
-            text_partner += f"\nБыло: {duration_text}"
-
+            await update_user(partner_id, partner_id=None, state='menu', chat_start=None)
+            await safe_send_message(partner_id, "💬 Собеседник начал поиск нового партнёра.", reply_markup=get_main_menu())
         await update_user(user_id, partner_id=None, state='searching', chat_start=None)
         await searching_queue.add(user_id)
-        await message.answer(text_initiator, reply_markup=get_searching_menu())
-
-        if partner_id:
-            await update_user(partner_id, partner_id=None, state='searching', chat_start=None)
-            await searching_queue.add(partner_id)
-            await safe_send_message(partner_id, text_partner, reply_markup=get_searching_menu())
-
+        text = "🔍 Ищем нового собеседника..."
+        if duration_text:
+            text += f"\n⏱️ Предыдущий диалог: {duration_text}"
+        await message.answer(text, reply_markup=get_searching_menu())
         return
 
-    if message.text == "Пожаловаться":
+    if message.text == "🚫 Пожаловаться":
         if not partner_id:
-            await message.answer("Нет активного чата для жалобы.")
+            await message.answer("❌ Нет активного чата для жалобы.")
             return
         await message.answer(
-            "Опиши причину жалобы:",
-            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True)
+            "📝 Опишите причину жалобы:",
+            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
         )
         await update_user(user_id, state='reporting')
         return
@@ -500,37 +454,37 @@ async def handle_messages(message: types.Message):
     if user['state'] == 'reporting':
         reason = message.text.strip()
         if not reason or len(reason) < 5:
-            await message.answer("Причина жалобы должна содержать не менее 5 символов. Попробуй еще раз:")
+            await message.answer("❌ Причина жалобы должна содержать не менее 5 символов.\nПопробуйте еще раз:")
             return
         partner_id = user['partner_id']
         if not partner_id:
-            await message.answer("Чат уже завершён.")
+            await message.answer("💬 Чат уже завершён.")
             await update_user(user_id, state='menu')
             return
         await add_report(user_id, partner_id, reason)
         await update_user(user_id, state='menu', partner_id=None)
         await update_user(partner_id, state='menu', partner_id=None)
-        await message.answer("Жалоба отправлена. Чат завершён.", reply_markup=get_main_menu())
-        await safe_send_message(partner_id, "Чат завершён из-за жалобы от собеседника.", reply_markup=get_main_menu())
+        await message.answer("✅ Жалоба отправлена. Чат завершён.", reply_markup=get_main_menu())
+        await safe_send_message(partner_id, "💬 Диалог завершён из-за жалобы от собеседника.", reply_markup=get_main_menu())
 
         reports_count = await get_reports_count(partner_id)
         if MODERATOR_ID:
             await safe_send_message(
                 MODERATOR_ID,
-                f"НОВАЯ ЖАЛОБА\n\n"
-                f"От: {user_id}\n"
-                f"На: {partner_id}\n"
-                f"Причина: {reason}\n"
-                f"Всего жалоб: {reports_count}"
+                f"🚫 НОВАЯ ЖАЛОБА\n\n"
+                f"👤 От: {user_id}\n"
+                f"🎯 На: {partner_id}\n"
+                f"📝 Причина: {reason}\n"
+                f"📊 Всего жалоб: {reports_count}"
             )
             if reports_count >= 5:
                 await ban_user_permanent(partner_id)
                 await safe_send_message(
                     MODERATOR_ID,
-                    f"АВТОБАН!\n"
-                    f"Пользователь {partner_id} забанен за 5+ жалоб."
+                    f"🔨 АВТОМАТИЧЕСКАЯ БЛОКИРОВКА!\n"
+                    f"Пользователь {partner_id} заблокирован за многочисленные жалобы."
                 )
-                await safe_send_message(partner_id, "Вы были забанены навсегда за многочисленные жалобы.")
+                await safe_send_message(partner_id, "❌ Вы были заблокированы за многочисленные жалобы.")
         return
 
     if user['state'] == 'chat' and user['partner_id']:
@@ -538,7 +492,7 @@ async def handle_messages(message: types.Message):
             await safe_forward_media(user['partner_id'], message)
         except Exception as e:
             logging.error(f"Error forwarding message: {e}")
-            await message.answer("Ошибка отправки сообщения.")
+            await message.answer("❌ Ошибка отправки сообщения.")
 
 # ================================
 # МОДЕРАТОРСКАЯ ПАНЕЛЬ
@@ -546,7 +500,7 @@ async def handle_messages(message: types.Message):
 @dp.callback_query(lambda c: c.data.startswith("mod_"))
 async def mod_callbacks(callback: types.CallbackQuery):
     if callback.from_user.id != MODERATOR_ID:
-        await callback.answer("Доступ запрещён.")
+        await callback.answer("❌ Доступ запрещён")
         return
     data = callback.data
 
@@ -554,48 +508,48 @@ async def mod_callbacks(callback: types.CallbackQuery):
         try:
             reports = await get_all_reports()
             if not reports:
-                await callback.message.edit_text("Жалоб нет.", reply_markup=get_mod_menu())
+                await callback.message.edit_text("✅ Жалоб нет", reply_markup=get_mod_menu())
                 return
-            text_lines = ["ПОСЛЕДНИЕ ЖАЛОБЫ:\n"]
+            text_lines = ["📨 ПОСЛЕДНИЕ ЖАЛОБЫ:\n"]
             for r in reports[:15]:
-                text_lines.append(f"{r['from_id']} → {r['to_id']}")
-                text_lines.append(f"{r['reason'] or 'Без причины'}")
-                text_lines.append(f"{r['timestamp'].strftime('%d.%m %H:%M')}\n")
+                text_lines.append(f"👤 {r['from_id']} → 🎯 {r['to_id']}")
+                text_lines.append(f"📝 {r['reason'] or 'Причина не указана'}")
+                text_lines.append(f"🕒 {r['timestamp'].strftime('%d.%m %H:%M')}\n")
             new_text = "\n".join(text_lines)
             new_markup = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Обновить", callback_data="mod_reports")],
-                [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
+                [InlineKeyboardButton(text="🔄 Обновить", callback_data="mod_reports")],
+                [InlineKeyboardButton(text="🔙 Назад", callback_data="mod_back")]
             ])
             if (callback.message.text or "") == new_text:
-                await callback.answer("Список не изменился.", show_alert=False)
+                await callback.answer("Список не изменился", show_alert=False)
                 return
             await callback.message.edit_text(new_text, reply_markup=new_markup)
             await callback.answer()
         except Exception as e:
             if "not modified" in str(e):
-                await callback.answer("Список не изменился.", show_alert=False)
+                await callback.answer("Список не изменился", show_alert=False)
             else:
                 logging.error(f"Error: {e}")
-                await callback.answer("Ошибка.", show_alert=True)
+                await callback.answer("❌ Ошибка", show_alert=True)
 
     elif data == "mod_stats":
         total_users, active_chats, total_reports = await get_stats()
         in_queue = len(searching_queue)
         reports_today = await get_reports_today()
         text = (
-            f"СТАТИСТИКА\n\n"
-            f"Пользователей: {total_users}\n"
-            f"Чатов: {active_chats}\n"
-            f"В поиске: {in_queue}\n"
-            f"Жалоб всего: {total_reports}\n"
-            f"Сегодня: {reports_today}"
+            f"📊 СТАТИСТИКА СИСТЕМЫ\n\n"
+            f"👥 Пользователей: {total_users}\n"
+            f"💬 Активных чатов: {active_chats}\n"
+            f"🔍 В поиске: {in_queue}\n"
+            f"📨 Всего жалоб: {total_reports}\n"
+            f"📅 Сегодня: {reports_today}"
         )
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Назад", callback_data="mod_back")]
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="mod_back")]
         ]))
 
     elif data == "mod_back":
-        await callback.message.edit_text("МОДЕРАТОРСКАЯ ПАНЕЛЬ", reply_markup=get_mod_menu())
+        await callback.message.edit_text("🛡️ ПАНЕЛЬ МОДЕРАТОРА", reply_markup=get_mod_menu())
 
     await callback.answer()
 

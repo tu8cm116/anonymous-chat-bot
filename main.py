@@ -336,46 +336,7 @@ async def cancel_anything(message: types.Message):
     await message.answer("Нечего отменять.", reply_markup=get_main_menu())
 
 # ================================
-# ЧАТ
-# ================================
-@dp.message(lambda m: m.text in ["Стоп", "Следующий", "Пожаловаться"])
-async def handle_chat_buttons(message: types.Message):
-    user_id = message.from_user.id
-    user = await get_user(user_id)
-    if not user or user['state'] != 'chat':
-        await message.answer("Сначала найди собеседника.")
-        return
-    if message.text == "Стоп":
-        partner_id = user['partner_id']
-        await update_user(user_id, partner_id=None, state='menu')
-        if partner_id:
-            await update_user(partner_id, partner_id=None, state='menu')
-            await safe_send_message(partner_id, "Собеседник завершил чат.", reply_markup=get_main_menu())
-        await searching_queue.remove(user_id)
-        await message.answer("Чат завершён.", reply_markup=get_main_menu())
-        return
-    if message.text == "Следующий":
-        partner_id = user['partner_id']
-        if partner_id:
-            await update_user(partner_id, partner_id=None, state='menu')
-            await safe_send_message(partner_id, "Собеседник ищет нового партнёра.", reply_markup=get_main_menu())
-        await update_user(user_id, partner_id=None, state='searching')
-        await searching_queue.add(user_id)
-        await message.answer("Ищем нового собеседника...", reply_markup=get_searching_menu())
-        return
-    if message.text == "Пожаловаться":
-        if not user['partner_id']:
-            await message.answer("Нет активного чата для жалобы.")
-            return
-        await message.answer(
-            "Опиши причину жалобы:",
-            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="Отмена")]], resize_keyboard=True)
-        )
-        await update_user(user_id, state='reporting')
-        return
-
-# ================================
-# МОДЕРАТОРСКИЕ ДЕЙСТВИЯ (ВЫШЕ handle_messages!)
+# МОДЕРАТОРСКИЕ ДЕЙСТВИЯ (ПЕРЕМЕЩЕНЫ ВЫШЕ!)
 # ================================
 @dp.message(lambda m: m.from_user.id == MODERATOR_ID)
 async def mod_actions(message: types.Message):
@@ -401,7 +362,7 @@ async def mod_actions(message: types.Message):
         except Exception as e:
             logging.error(f"Ban error: {e}")
             await message.answer("Ошибка при бане.", reply_markup=get_mod_menu())
-        return  # ← ВАЖНО: не дать попасть в handle_messages
+        return  # Важно: предотвращаем дальнейшую обработку
 
     # ПОИСК ПО ID
     elif user['state'] == 'mod_searching_user':
@@ -435,7 +396,7 @@ async def mod_actions(message: types.Message):
         except ValueError:
             await message.answer("Неверный ID.", reply_markup=get_mod_menu())
             await update_user(message.from_user.id, state='mod_menu')
-        return  # ← ВАЖНО
+        return  # Важно: предотвращаем дальнейшую обработку
 
 # ================================
 # ОБРАБОТКА СООБЩЕНИЙ (НИЖЕ mod_actions!)

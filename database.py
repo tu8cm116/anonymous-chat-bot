@@ -1,6 +1,7 @@
 import asyncpg
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
+import logging
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -9,88 +10,173 @@ pool = None
 # --- Инициализация БД ---
 async def init_db():
     global pool
-    pool = await asyncpg.create_pool(DATABASE_URL)
-    async with pool.acquire() as conn:
-        await conn.execute('''
-            CREATE TABLE IF NOT EXISTS users (
-                tg_id BIGINT PRIMARY KEY,
-                state TEXT DEFAULT 'menu',
-                partner_id BIGINT,
-                last_active TIMESTAMP DEFAULT NOW()
-            );
-            CREATE TABLE IF NOT EXISTS reports (
-                id SERIAL PRIMARY KEY,
-                from_id BIGINT,
-                to_id BIGINT,
-                timestamp TIMESTAMP DEFAULT NOW()
-            );
-            CREATE TABLE IF NOT EXISTS bans (
-                tg_id BIGINT PRIMARY KEY,
-                until TIMESTAMP
-            );
-        ''')
+    try:
+        pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=10)
+        async with pool.acquire() as conn:
+            await conn.execute('''
+                CREATE TABLE IF NOT EXISTS users (
+                    tg_id BIGINT PRIMARY KEY,
+                    state TEXT DEFAULT 'menu',
+                    partner_id BIGINT,
+                    last_active TIMESTAMP DEFAULT NOW(),
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+                
+                CREATE TABLE IF NOT EXISTS reports (
+                    id SERIAL PRIMARY KEY,
+                    reporter_id BIGINT,
+                    reported_id BIGINT,
+                    reason TEXT,
+                    timestamp TIMESTAMP DEFAULT NOW()
+                );
+                
+                CREATE TABLE IF NOT EXISTS bans (
+                    tg_id BIGINT PRIMARY KEY,
+                    until TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT NOW()
+                );
+            ''')
+        logging.info("Database initialized successfully")
+    except Exception as e:
+        logging.error(f"Database initialization failed: {e}")
+        raise
 
 # --- Пользователь ---
 async def get_user(tg_id):
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT * FROM users WHERE tg_id = $1', tg_id)
-        return dict(row) if row else None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow('SELECT * FROM users WHERE tg_id = $1', tg_id)
+            return dict(row) if row else None
+    except Exception as e:
+        logging.error(f"Error getting user {tg_id}: {e}")
+        return None
 
 async def update_user(tg_id, **kwargs):
     if not kwargs:
         return
-    async with pool.acquire() as conn:
-        columns = list(kwargs.keys())
-        values = list(kwargs.values())
-        placeholders = ', '.join(f'${i+2}' for i in range(len(values)))
-        set_clause = ', '.join(f"{col} = EXCLUDED.{col}" for col in columns)
-        await conn.execute(f'''
-            INSERT INTO users (tg_id, {', '.join(columns)})
-            VALUES ($1, {placeholders})
-            ON CONFLICT (tg_id) DO UPDATE SET {set_clause}
-        ''', tg_id, *values)
-
-# --- Поиск партнёра ---
-async def find_partner(exclude_id):
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow('''
-            SELECT tg_id FROM users 
-            WHERE state = 'searching' AND tg_id != $1
-            ORDER BY last_active ASC LIMIT 1
-        ''', exclude_id)
-        return row['tg_id'] if row else None
+    try:
+        async with pool.acquire() as conn:
+            columns = list(kwargs.keys())
+            values = list(kwargs.values())
+            
+            set_clause = ', '.join([f"{col} = ${i+2}" for i, col in enumerate(columns)])
+            query = f'''
+                INSERT INTO users (tg_id, {', '.join(columns)})
+                VALUES ($1, {', '.join([f'${i+2}' for i in range(len(values))])})
+                ON CONFLICT (tg_id) DO UPDATE SET {set_clause}, last_active = NOW()
+            '''
+            await conn.execute(query, tg_id, *values)
+    except Exception as e:
+        logging.error(f"Error updating user {tg_id}: {e}")
 
 # --- Жалобы ---
-async def add_report(from_id, to_id):
-    async with pool.acquire() as conn:
-        await conn.execute('INSERT INTO reports (from_id, to_id) VALUES ($1, $2)', from_id, to_id)
+async def add_report(reporter_id, reported_id, reason=None):
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute(
+                'INSERT INTO reports (reporter_id, reported_id, reason) VALUES ($1, $2, $3)',
+                reporter_id, reported_id, reason
+            )
+    except Exception as e:
+        logging.error(f"Error adding report: {e}")
 
 async def get_reports_count(tg_id):
-    async with pool.acquire() as conn:
-        return await conn.fetchval('SELECT COUNT(*) FROM reports WHERE to_id = $1', tg_id)
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                'SELECT COUNT(*) FROM reports WHERE reported_id = $1', 
+                tg_id
+            )
+    except Exception as e:
+        logging.error(f"Error getting reports count: {e}")
+        return 0
+
+async def get_all_reports():
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch('SELECT * FROM reports ORDER BY timestamp DESC LIMIT 50')
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting all reports: {e}")
+        return []
+
+async def get_reports_today():
+    try:
+        async with pool.acquire() as conn:
+            return await conn.fetchval(
+                'SELECT COUNT(*) FROM reports WHERE timestamp >= CURRENT_DATE'
+            )
+    except Exception as e:
+        logging.error(f"Error getting today's reports: {e}")
+        return 0
 
 # --- Баны ---
 async def ban_user(tg_id, hours=24):
-    async with pool.acquire() as conn:
-        await conn.execute('''
-            INSERT INTO bans (tg_id, until)
-            VALUES ($1, NOW() + ($2 || ' hours')::INTERVAL)
-            ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
-        ''', tg_id, str(hours))
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute('''
+                INSERT INTO bans (tg_id, until)
+                VALUES ($1, NOW() + INTERVAL \'1 hour\' * $2)
+                ON CONFLICT (tg_id) DO UPDATE SET until = EXCLUDED.until
+            ''', tg_id, hours)
+            
+            await conn.execute(
+                'UPDATE users SET state = $1, partner_id = NULL WHERE tg_id = $2',
+                'banned', tg_id
+            )
+    except Exception as e:
+        logging.error(f"Error banning user {tg_id}: {e}")
 
 async def is_banned(tg_id):
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow('SELECT until FROM bans WHERE tg_id = $1 AND until > NOW()', tg_id)
-        return row is not None
+    try:
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                'SELECT until FROM bans WHERE tg_id = $1 AND until > NOW()', 
+                tg_id
+            )
+            return row is not None
+    except Exception as e:
+        logging.error(f"Error checking ban for {tg_id}: {e}")
+        return False
 
 async def unban_user(tg_id):
-    async with pool.acquire() as conn:
-        await conn.execute('DELETE FROM bans WHERE tg_id = $1', tg_id)
+    try:
+        async with pool.acquire() as conn:
+            await conn.execute('DELETE FROM bans WHERE tg_id = $1', tg_id)
+    except Exception as e:
+        logging.error(f"Error unbanning user {tg_id}: {e}")
 
 # --- Статистика ---
+async def get_all_users():
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch('SELECT * FROM users')
+            return [dict(row) for row in rows]
+    except Exception as e:
+        logging.error(f"Error getting all users: {e}")
+        return []
+
 async def get_stats():
-    async with pool.acquire() as conn:
-        total_users = await conn.fetchval('SELECT COUNT(*) FROM users')
-        active_chats = await conn.fetchval("SELECT COUNT(*) / 2 FROM users WHERE state = 'chat'")
-        total_reports = await conn.fetchval('SELECT COUNT(*) FROM reports')
-        return total_users, active_chats, total_reports
+    try:
+        async with pool.acquire() as conn:
+            total_users = await conn.fetchval('SELECT COUNT(*) FROM users')
+            active_chats = await conn.fetchval("SELECT COUNT(*) FROM users WHERE state = 'chat'")
+            total_reports = await conn.fetchval('SELECT COUNT(*) FROM reports')
+            return total_users, active_chats // 2, total_reports  # Делим на 2 для количества чатов
+    except Exception as e:
+        logging.error(f"Error getting stats: {e}")
+        return 0, 0, 0
+
+# --- Очистка неактивных пользователей ---
+async def cleanup_inactive_users(hours=1):
+    try:
+        async with pool.acquire() as conn:
+            result = await conn.execute('''
+                DELETE FROM users 
+                WHERE last_active < NOW() - INTERVAL \'1 hour\' * $1 
+                AND state != 'chat'
+            ''', hours)
+            return result
+    except Exception as e:
+        logging.error(f"Error cleaning inactive users: {e}")
+        return "0"

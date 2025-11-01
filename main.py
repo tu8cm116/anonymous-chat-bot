@@ -315,7 +315,6 @@ async def user_stats(message: types.Message):
         f"📊 ВАША СТАТИСТИКА\n\n"
         f"💬 Количество чатов: {total_chats}\n"
         f"⏱️ Общее время: {time_str}\n"
-        f"🎯 Рейтинг активности: {'🔥' * min(total_chats, 5)}"
     )
     await message.answer(text)
 
@@ -369,15 +368,20 @@ async def cancel_anything(message: types.Message):
     user = await get_user(user_id)
     if not user:
         return
+    
+    # Если пользователь в режиме жалобы
     if user['state'] == 'reporting':
         await update_user(user_id, state='chat')
         await message.answer("❌ Жалоба отменена.", reply_markup=get_chat_menu())
         return
+    
+    # Если пользователь в режиме поиска
     if user['state'] == 'searching':
         await searching_queue.remove(user_id)
         await update_user(user_id, state='menu')
         await message.answer("❌ Поиск отменён.", reply_markup=get_main_menu())
         return
+    
     await message.answer("❌ Нечего отменять.", reply_markup=get_main_menu())
 
 # ================================
@@ -435,7 +439,7 @@ async def handle_chat_buttons(message: types.Message):
             return
         await message.answer(
             "📝 Опишите причину жалобы:",
-            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена")]], resize_keyboard=True)
+            reply_markup=ReplyKeyboardMarkup(keyboard=[[KeyboardButton(text="❌ Отмена поиска")]], resize_keyboard=True)
         )
         await update_user(user_id, state='reporting')
         return
@@ -449,6 +453,12 @@ async def handle_messages(message: types.Message):
     user = await get_user(user_id)
     if not user:
         await update_user(user_id, state='menu')
+        return
+
+    # Обработка отмены жалобы
+    if user['state'] == 'reporting' and message.text == "❌ Отмена поиска":
+        await update_user(user_id, state='chat')
+        await message.answer("❌ Жалоба отменена. Продолжайте общение.", reply_markup=get_chat_menu())
         return
 
     if user['state'] == 'reporting':
